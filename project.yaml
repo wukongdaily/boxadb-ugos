@@ -1,0 +1,57 @@
+# boxadb UGOS 原生应用（真实版，路线 A：inner + 系统反代 + WS）
+spec_version: 2.1
+app_id: com.wukongdaily.boxadb
+version: 0.2.2
+
+support_arch:
+  - amd64
+# arm64 暂缓：等 UGOS 版稳定后再加（用户 2026-11-19 要求）
+
+product_series:
+  - nasync
+
+supports:
+  - pc
+  - app
+
+# 直接执行二进制：UGOS 形态由 Go 侧检测 UGAPP_* 环境变量自动启用默认值
+# （0.0.0.0:21010、BASE_PATH=/boxadb、关内置 https），不再依赖 shell 包装脚本
+start_cmd: bin/boxadb-bridge
+port: 21010
+proxy_path: boxadb
+
+# 路线 A：UGOS 桌面内独立窗口打开；https 由系统网关提供，桥关掉内置 TLS
+open_type: inner
+
+tag_types:
+  - utility
+  - devtool
+
+depend_fw_version: 1.13.0.0000
+
+# 桥对盒子 5555 的出站依赖此权限（探针真机已证生效）
+permissions:
+  - NETWORK.ACCESS_INTERNET
+
+only_admin: true
+support_migration: false
+allow_add_access_path: false
+
+license_agreement_link:
+  - https://github.com/wukongdaily/boxadb/blob/main/LICENSE
+source_code_link:
+  - https://github.com/wukongdaily/boxadb
+
+i18n:
+  en-US:
+    name: BoxADB
+    description: Debug Android TV boxes from the browser via the UGREEN NAS (ADB over WiFi)
+    author: Wukong Daily
+    official: https://github.com/wukongdaily/boxadb
+    help: https://github.com/wukongdaily/boxadb/discussions
+  zh-CN:
+    name: 盒子助手
+    description: 在浏览器里远程调试 Android 盒子（ADB over WiFi），绿联 NAS 原生版
+    author: 悟空的日常
+    official: https://github.com/wukongdaily/boxadb
+    help: https://github.com/wukongdaily/boxadb/discussions

@@ -1,0 +1,147 @@
+diff --git a/bridge.go b/bridge.go
+index eb1d1c1..2186b7f 100644
+--- a/bridge.go
++++ b/bridge.go
+@@ -31,11 +31,28 @@ import (
+ 
+ // ── 配置 ──
+ 
++// UGOS 原生应用形态：系统会给应用进程注入 UGAPP_* 环境变量。
++// 检测到即启用 UGOS 默认值，start_cmd 可直接执行本二进制，无需 shell 包装。
++func ugosMode() bool { return os.Getenv("UGAPP_INSTALL_DIR") != "" }
++
++func ugosBasePath() string {
++	if p := os.Getenv("BRIDGE_BASE_PATH"); p != "" {
++		return p
++	}
++	if ugosMode() {
++		return "/boxadb" // 与 project.yaml 的 proxy_path 一致
++	}
++	return ""
++}
++
+ // 桌面形态默认只监听回环；Docker/NAS 形态用 BRIDGE_HOST=0.0.0.0 对外提供服务。
+ func listenHost() string {
+ 	if h := os.Getenv("BRIDGE_HOST"); h != "" {
+ 		return h
+ 	}
++	if ugosMode() {
++		return "0.0.0.0"
++	}
+ 	return "127.0.0.1"
+ }
+ 
+@@ -48,6 +65,9 @@ func listenPort() string {
+ 	if p := os.Getenv("BRIDGE_PORT"); p != "" {
+ 		return p
+ 	}
++	if ugosMode() {
++		return "21010" // 与 project.yaml 的 port 一致
++	}
+ 	return "8765"
+ }
+ 
+@@ -256,6 +276,17 @@ func allowCross(w http.ResponseWriter) {
+ 
+ func router(w http.ResponseWriter, r *http.Request) {
+ 	allowCross(w)
++	// 子路径部署（如 UGOS 反代 /boxadb → 桥）兼容：网关转发时可能保留前缀，
++	// 也可能已剥掉。配置了 BRIDGE_BASE_PATH 且路径确实带前缀时剥掉；
++	// 已被网关剥过的路径原样放行，两种情况都能正确路由。
++	if base := strings.Trim(ugosBasePath(), "/"); base != "" {
++		switch p := r.URL.Path; {
++		case p == "/"+base:
++			r.URL.Path = "/"
++		case strings.HasPrefix(p, "/"+base+"/"):
++			r.URL.Path = strings.TrimPrefix(p, "/"+base)
++		}
++	}
+ 	// http 侧把非本机地址的页面请求跳到内置 https（安全上下文，手机才能用）
+ 	if r.TLS == nil {
+ 		if h := httpsRedirectHost(r); h != "" {
+diff --git a/index.html b/index.html
+index 5890f2d..4fa39c8 100644
+--- a/index.html
++++ b/index.html
+@@ -210,6 +210,15 @@
+       <h3>需要换成加密方式打开</h3>
+       <p>你现在是用 <b>http://</b>（不加密）访问的。浏览器有条安全规定：<b>不加密的页面不能生成 ADB 密钥</b>，所以连不上盒子。这跟盒子、网络都没关系，换个地址就能解决。</p>
+ 
++      <!-- 绿联 UGOS 引导：从系统桌面打开（https 由绿联网关提供，无需证书操作） -->
++      <div id="insecure-ugos" hidden>
++        <p>绿联 UGOS 版<b>盒子助手</b>请从 <b>UGOS 桌面的「盒子助手」图标</b>打开（或应用中心启动）。</p>
++        <ol class="modal-steps">
++          <li>系统会通过绿联的加密网关访问应用，自动获得 HTTPS 安全上下文，<b>无需任何证书操作</b>。</li>
++          <li>当前直接访问桥端口的 http 页面无法生成 ADB 密钥（浏览器安全限制），关掉即可。</li>
++        </ol>
++      </div>
++
+       <!-- 飞牛版引导：跳飞牛加密主页 -->
+       <div id="insecure-fnos">
+         <button id="insecure-fix" class="btn">🔒 打开飞牛加密主页</button>
+diff --git a/js/app.js b/js/app.js
+index 3af61ce..84f4e1a 100644
+--- a/js/app.js
++++ b/js/app.js
+@@ -311,9 +311,17 @@ function showInsecureDialog(){
+   //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
+   const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
+   const ownTls=/^\d{2,5}$/.test(tlsPort);
+-  const fnosBox=$('#insecure-fnos'), selfBox=$('#insecure-selfhost');
+-  if(fnosBox) fnosBox.hidden = ownTls || !SELF_HOSTED;
++  // 平台分流：绿联 UGOS 走自己的引导（从系统桌面打开），不显示飞牛文案
++  const platform=(document.querySelector('meta[name="boxadb-platform"]')?.content||'').trim();
++  const fnosBox=$('#insecure-fnos'), selfBox=$('#insecure-selfhost'), ugosBox=$('#insecure-ugos');
++  if(fnosBox) fnosBox.hidden = ownTls || !SELF_HOSTED || platform==='ugos';
+   if(selfBox) selfBox.hidden = !ownTls;
++  if(ugosBox) ugosBox.hidden = platform!=='ugos';
++  if(platform==='ugos'){ // UGOS：引导到系统桌面入口，其余按钮逻辑（改端口/自签跳转）都不适用
++    const s=$('#insecure-url'), b=$('#insecure-fix'), t=$('#insecure-tls'), turl=$('#insecure-tls-url');
++    if(s) s.textContent=''; if(b) b.hidden=true; if(t) t.hidden=true; if(turl) turl.textContent='';
++    m.hidden=false; return;
++  }
+ 
+   const httpsUrl=ownTls
+     ? `https://${location.hostname}:${tlsPort}${location.pathname}${location.search}` : '';
+diff --git a/webapp_on.go b/webapp_on.go
+index 3555ce6..c3823cf 100644
+--- a/webapp_on.go
++++ b/webapp_on.go
+@@ -8,7 +8,6 @@ import (
+ 	"io/fs"
+ 	"log"
+ 	"net/http"
+-	"os"
+ 	"strings"
+ 	"time"
+ )
+@@ -23,10 +22,15 @@ var webappFS embed.FS
+ // 自托管标记：运行时注入 index.html，让前端把桥地址切到「同源 + 前缀」。
+ // 不改 JS 源码：仓库前端与镜像前端字节一致。子路径部署用 BRIDGE_BASE_PATH（如 /boxadb）。
+ func bridgeMeta() string {
+-	prefix := os.Getenv("BRIDGE_BASE_PATH")
++	prefix := ugosBasePath() // BRIDGE_BASE_PATH 优先；UGOS 形态默认 /boxadb
++	platform := ""
++	if ugosMode() {
++		platform = `<meta name="boxadb-platform" content="ugos">`
++	}
+ 	return `<meta name="boxadb-mode" content="selfhosted">` +
+ 		`<meta name="boxadb-prefix" content="` + prefix + `">` +
+-		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">`
++		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">` +
++		platform
+ }
+ 
+ func staticHandler() http.Handler {
+@@ -83,4 +87,10 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
+ func privateOnlyDefault() bool { return true }
+ 
+ // 自托管默认开内置 https（8766）：手机需要安全上下文；BRIDGE_HTTPS_PORT=0 可关。
+-func httpsDefault() string { return "8766" }
++// UGOS 形态默认关：https 由系统网关提供，桥只跑纯 http + WS。
++func httpsDefault() string {
++	if ugosMode() {
++		return "0"
++	}
++	return "8766"
++}
