@@ -1,46 +1,35 @@
-# boxadb-ugos
+# 盒子助手 · 绿联 UGOS 版 [![bilibili](https://img.shields.io/badge/_B站_·_反馈-A0AABC?style=flat&logo=bilibili&logoColor=fff&labelColor=FB7299&color=3a3a44)](https://www.bilibili.com/video/BV1e4sp6nETW/)
 
-「盒子助手」(BoxADB) 的绿联 UGOS Pro **原生应用**打包工程。主仓（前端 + Go 桥源码）在 [wukongdaily/boxadb](https://github.com/wukongdaily/boxadb)，本仓只负责 UGOS 打包与平台适配。
+绿联 UGOS Pro 原生应用：**点绿联桌面的「盒子助手」图标 → 打开的就是盒子助手网页**
+（经系统加密网关同源访问，局域网里的手机平板也能开）。
 
-## 已验证结论（DX4600 Pro 真机，UGOS Pro）
+## 截图
 
-- ✅ 系统反代透传 WebSocket upgrade（ADB 隧道可用）
-- ✅ 系统 https 网关提供安全上下文（crypto.subtle 可用，无需自签证书）
-- ✅ `NETWORK.ACCESS_INTERNET` 权限下桥可出站连盒子 5555
-- ✅ `open_type: inner` 桌面独立窗口，UGREENlink 远程免配置可用
-- ✅ macOS 版 ugcli 打包即够用（无需 Debian 12）
+<!-- TODO: 截图放入 screenshot/ 目录后在此引用 -->
+<p align="center">
+  <img src="screenshot/README-1.png" width="420" alt="盒子助手 UGOS 版">
+</p>
 
-## 目录
+## 相关项目
 
-```
-project.yaml                  # UGOS 应用清单（app_id / 端口 / proxy_path / open_type）
-rootfs_amd64/bin/boxadb-bridge  # Go 桥（静态二进制，含内嵌前端）
-rootfs_arm64/bin/             # arm64 暂缓（尚无可测机型），结构占位
-rootfs_common/icon.png        # 应用图标 256×256
-rootfs_common/www/index.html  # 入口引导页（跳 /boxadb/，真正界面由桥经反代提供）
-scripts/build.sh              # 一键构建（拉主仓 + 补丁 + 交叉编译 + ugcli pack）
-scripts/ugos.patch            # 主仓相对上游的 UGOS 支持改动
-screenshot/                   # 截图存放目录
-```
+本项目的界面，就是「盒子助手」同一套前端，为绿联 UGOS Pro 做的原生移植——功能一致，按场景二选一：
 
-## 安装（手动装 UPK）
+- **[boxadb（桌面 / 网页版）](https://github.com/wukongdaily/boxadb)** —— 电脑开本地桥，浏览器直接访问 <https://wukongdaily.github.io/boxadb/>，支持 WebUSB 数据线直连。
+- **[boxadb-fnos（飞牛版）](https://github.com/wukongdaily/boxadb-fnos)** —— 盒子助手常驻飞牛 NAS，经统一网关同源。
+- **boxadb-ugos（本项目 · 绿联版）** —— 盒子助手常驻绿联 NAS，点桌面图标即用，经 UGREENlink 出门在外也能连家里盒子。
 
-1. 应用中心 → 手动安装 → 选 `amd64_nasync_com.wukongdaily.boxadb_x.y.z.b.upk`
-2. 非官方包需设备开发者授权：`ugdev.sig` 放管理员个人文件夹根目录（有效期 1 年；固件 ≥ 1.16 还需在「应用中心 > 设置 > 应用开发设置」点整机授权）
-3. UGOS 桌面点「盒子助手」图标即可使用
+## 安装
 
-## 构建
+上架后可在 **绿联应用中心** 搜索「盒子助手」一键安装（应用以原生应用形式运行，无需 Docker、无需命令行）。
 
-```sh
-sh scripts/build.sh 1     # 参数为 build 号
-```
+## 第三方组件致谢（均为 MIT）
 
-产物在 `build_dir/pkgs/upk/`。仅出 amd64（arm64 等有机型再恢复）。
+- **[@yume-chan/ya-webadb (Tango)](https://github.com/yume-chan/ya-webadb)** —— ADB 协议引擎（Simon Chan）
+- **[xterm.js](https://xtermjs.org/)** —— 浏览器终端
+- **[fflate](https://github.com/101arrowz/fflate)** —— APK/XAPK 解包
 
-## 架构要点（绿联版特有）
+版权声明与许可全文见 [`boxadb 仓库 www/js/vendor/THIRD-PARTY-LICENSES.md`](https://github.com/wukongdaily/boxadb/blob/main/js/vendor/THIRD-PARTY-LICENSES.md)。
 
-- 路线 A：`open_type: inner` + 系统 https 网关，**桥跑纯 http + WS**（内置 TLS 关闭）
-- 桥检测 `UGAPP_*` 环境变量自动进 UGOS 形态：`0.0.0.0:21010`、前缀 `/boxadb`、https 关
-- router 兼容网关「剥/不剥」`/boxadb` 前缀两种转发方式
-- 出站连盒子依赖 `permissions: NETWORK.ACCESS_INTERNET`（缺了会 Dial 失败）
-- 应用以非 root 独立用户运行，数据落 `UGAPP_DATA_DIR`，SIGTERM 10 秒内优雅退出
+## 许可
+
+[MIT](LICENSE)
