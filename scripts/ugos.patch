@@ -1,13 +1,35 @@
 diff --git a/bridge.go b/bridge.go
-index eb1d1c1..2186b7f 100644
+index 8628170..8ab2f2a 100644
 --- a/bridge.go
 +++ b/bridge.go
-@@ -31,11 +31,28 @@ import (
+@@ -22,6 +22,7 @@ import (
+ 	"net/http"
+ 	"os"
+ 	"os/signal"
++	"path/filepath"
+ 	"strconv"
+ 	"strings"
+ 	"sync/atomic"
+@@ -31,11 +32,42 @@ import (
  
  // ── 配置 ──
  
++// 应用数据目录：UGOS 注入 UGAPP_DATA_DIR；其他形态可用 BRIDGE_STATE_DIR 覆盖
++func dataDir() string {
++	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
++		return d
++	}
++	if d := os.Getenv("UGAPP_DATA_DIR"); d != "" {
++		return d
++	}
++	if d, err := os.UserCacheDir(); err == nil {
++		return filepath.Join(d, "boxadb")
++	}
++	return os.TempDir()
++}
++
 +// UGOS 原生应用形态：系统会给应用进程注入 UGAPP_* 环境变量。
-+// 检测到即启用 UGOS 默认值，start_cmd 可直接执行本二进制，无需 shell 包装。
++// 检测到即启用 UGOS 默认值，start_cmd 可直接执行本二进制，无需 shell 包装脚本。
 +func ugosMode() bool { return os.Getenv("UGAPP_INSTALL_DIR") != "" }
 +
 +func ugosBasePath() string {
@@ -31,7 +53,7 @@ index eb1d1c1..2186b7f 100644
  	return "127.0.0.1"
  }
  
-@@ -48,6 +65,9 @@ func listenPort() string {
+@@ -48,6 +80,9 @@ func listenPort() string {
  	if p := os.Getenv("BRIDGE_PORT"); p != "" {
  		return p
  	}
@@ -41,13 +63,21 @@ index eb1d1c1..2186b7f 100644
  	return "8765"
  }
  
-@@ -256,6 +276,17 @@ func allowCross(w http.ResponseWriter) {
+@@ -248,7 +283,7 @@ func handleTunnel(w http.ResponseWriter, r *http.Request) {
+ 
+ func allowCross(w http.ResponseWriter) {
+ 	w.Header().Set("Access-Control-Allow-Origin", "*")
+-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
++	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+ 	w.Header().Set("Access-Control-Allow-Headers", "*")
+ 	// GitHub Pages(https) 调 ws://127.0.0.1 的 PNA 预检
+ 	w.Header().Set("Access-Control-Allow-Private-Network", "true")
+@@ -258,6 +293,16 @@ var sidecar *pairSidecar
  
  func router(w http.ResponseWriter, r *http.Request) {
  	allowCross(w)
 +	// 子路径部署（如 UGOS 反代 /boxadb → 桥）兼容：网关转发时可能保留前缀，
-+	// 也可能已剥掉。配置了 BRIDGE_BASE_PATH 且路径确实带前缀时剥掉；
-+	// 已被网关剥过的路径原样放行，两种情况都能正确路由。
++	// 也可能已剥掉。配置了前缀且路径确实带前缀时剥掉；已被网关剥过的原样放行。
 +	if base := strings.Trim(ugosBasePath(), "/"); base != "" {
 +		switch p := r.URL.Path; {
 +		case p == "/"+base:
@@ -56,11 +86,53 @@ index eb1d1c1..2186b7f 100644
 +			r.URL.Path = strings.TrimPrefix(p, "/"+base)
 +		}
 +	}
- 	// http 侧把非本机地址的页面请求跳到内置 https（安全上下文，手机才能用）
- 	if r.TLS == nil {
- 		if h := httpsRedirectHost(r); h != "" {
+ 	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
+ 	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
+ 		sidecar.handle(w, r)
+@@ -346,6 +391,41 @@ func main() {
+ 		os.Exit(healthCheck())
+ 	}
+ 	addr := net.JoinHostPort(listenHost(), listenPort())
++
++	// UGOS 形态：随包带 Node 运行时 + 主仓同一份配对模块（pair/），
++	// 与飞牛/Docker 走完全相同的 sidecar 实现。
++	if ugosMode() {
++		if exe, err := os.Executable(); err == nil {
++			dir := filepath.Dir(exe)
++			def := func(k, v string) {
++				if os.Getenv(k) == "" {
++					os.Setenv(k, v)
++				}
++			}
++			// Node 运行时：优先包内自带的（版本可控），没有就用系统自带的
++			nodeBin := filepath.Join(dir, "node")
++			if st, err := os.Stat(nodeBin); err != nil || st.IsDir() {
++				nodeBin = ""
++				for _, p := range []string{"/usr/bin/node", "/usr/local/bin/node", "/usr/sbin/node"} {
++					if st, e := os.Stat(p); e == nil && !st.IsDir() {
++						nodeBin = p
++						break
++					}
++				}
++			}
++			def("BOXADB_PAIR_PORT", "21011")
++			def("BOXADB_NODE_BIN", nodeBin)
++			def("BOXADB_PAIR_DAEMON", filepath.Join(dir, "..", "pair", "daemon.js"))
++			def("BOXADB_PIN_PORT", "5555")
++			def("BRIDGE_STATE_DIR", dataDir())
++			def("BOXADB_LOG_FILE", filepath.Join(dataDir(), "pair.log"))
++			if nodeBin == "" {
++				log.Printf("ugos: 找不到 node（包内 bin/node 缺失，系统 node 在沙箱里不可用），配对能力将关闭")
++			} else {
++				log.Printf("ugos: node=%s pair=%s", nodeBin, filepath.Join(dir, "..", "pair", "daemon.js"))
++			}
++		}
++	}
+ 	sidecar = startPairSidecar()
+ 	if sidecar != nil {
+ 		defer sidecar.stop()
 diff --git a/index.html b/index.html
-index 5890f2d..4fa39c8 100644
+index edcc94a..351b5cf 100644
 --- a/index.html
 +++ b/index.html
 @@ -210,6 +210,15 @@
@@ -80,10 +152,18 @@ index 5890f2d..4fa39c8 100644
        <div id="insecure-fnos">
          <button id="insecure-fix" class="btn">🔒 打开飞牛加密主页</button>
 diff --git a/js/app.js b/js/app.js
-index 3af61ce..84f4e1a 100644
+index 21c3163..902f69d 100644
 --- a/js/app.js
 +++ b/js/app.js
-@@ -311,9 +311,17 @@ function showInsecureDialog(){
+@@ -217,7 +217,6 @@ async function showPortDialog(ip, reason){
+         : '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口，明文进不去。<b>当前这个版本（连的是本机/容器里的桥）还不能配对</b>：请先用电脑执行一次 <code>adb tcpip 5555</code> 把盒子端口固定下来，之后回到这里只填 IP 就能连。');
+   if(hint) hint.textContent = ip;
+   if(inp) inp.value = (state.prefs.ports && state.prefs.ports[ip]) || '';
+-  if (disc && disc.lastPort && inp && !inp.value) inp.value = String(disc.lastPort);
+   if(pinp) pinp.value = '';
+   if(cinp) cinp.value = '';
+   if(ok) ok.textContent = canPair ? '连接并固定端口' : '连接并固定端口';
+@@ -533,9 +532,17 @@ function showInsecureDialog(){
    //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
    const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
    const ownTls=/^\d{2,5}$/.test(tlsPort);
@@ -103,8 +183,150 @@ index 3af61ce..84f4e1a 100644
  
    const httpsUrl=ownTls
      ? `https://${location.hostname}:${tlsPort}${location.pathname}${location.search}` : '';
+diff --git a/pair/api.js b/pair/api.js
+index f9c5e6b..df3d733 100644
+--- a/pair/api.js
++++ b/pair/api.js
+@@ -52,7 +52,7 @@ async function pairFlow({ host, pairPort, code, connPort, pinPort = 5555, log =
+   }
+   let port = Number(connPort) || 0;
+   if (!port) {
+-    const found = await mdns.connect(2000);
++    const found = await mdns.connect(2000, host);
+     const hit = found.find((f) => f.instance === p.identity) || found[0];
+     if (hit) port = hit.port;
+   }
+@@ -86,7 +86,7 @@ async function discoverFlow({ host } = {}) {
+   const known = keystore.hintFor(host);
+   const lastPort = known && known.port ? Number(known.port) : null;
+   if (!discoverable) return { status: 200, body: { discoverable: false, lastPort, pairing: [], connect: [] } };
+-  const [pairing, connect] = await Promise.all([mdns.pairing(1800), mdns.connect(1800)]);
++  const [pairing, connect] = await Promise.all([mdns.pairing(1800, host), mdns.connect(1800, host)]);
+   const seen = new Set(keystore.list().map((x) => x.instance));
+   return { status: 200, body: { discoverable: true, lastPort, pairing, connect: connect.map((c) => ({ ...c, paired: seen.has(c.instance) })) } };
+ }
+diff --git a/pair/daemon.js b/pair/daemon.js
+index 65b2cca..da637fe 100644
+--- a/pair/daemon.js
++++ b/pair/daemon.js
+@@ -10,7 +10,11 @@ const HOST = process.env.BOXADB_PAIR_HOST || '127.0.0.1';
+ const PIN = Number(process.env.BOXADB_PIN_PORT || 5555);
+ keystore.init(process.env.BOXADB_STATE_DIR || path.join(process.env.DATA_DIR || '/data', 'pair'));
+ 
+-const say = (...a) => console.log(new Date().toISOString(), '[pair]', ...a);
++const say = (...a) => {
++  const line = [new Date().toISOString(), '[pair]', ...a].join(' ');
++  console.log(line);
++  if (process.env.BOXADB_LOG_FILE) { try { require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE, line + '\n'); } catch {} }
++};
+ 
+ // 桥被强杀时来不及回收子进程，这里靠 stdin 管道：父进程一没，读端就 EOF，sidecar 自己退出
+ process.stdin.resume();
+diff --git a/pair/index.js b/pair/index.js
+index 208dc30..0e1c88e 100644
+--- a/pair/index.js
++++ b/pair/index.js
+@@ -124,12 +124,20 @@ async function pin({ host, port, identity, psk, pinPort = 5555, timeout = 8000 }
+ // 自愈：现查 mDNS（端口每次开机都变）→ 用已存 psk 开门钉端口
+ async function recover({ host, pinPort = 5555, timeout = 8000, mdnsMs = 2000 } = {}) {
+   if (host && await probe(host, pinPort, 1200)) return { ok: true, already: true, pinPort };   // 端口已通，无需任何自愈
+-  const found = await mdns.connect(mdnsMs);
++  const found = await mdns.connect(mdnsMs, host);
+   const known = ks.list();
+   // 只认「配过对且属于这台 IP」的实例；无归属信息的旧记录仅在当地只有一条凭据时才敢套用
+   const sole = known.length === 1 && found.length === 1;
+-  const hit = found.find((f) => known.some((k) => k.instance === f.instance &&
++  let hit = found.find((f) => known.some((k) => k.instance === f.instance &&
+     (!host || !k.peerHost ? (k.peerHost ? k.peerHost === host : sole) : k.peerHost === host)));
++  // 盒子重启后 mDNS 实例名的随机后缀可能变（adb-<serial>-xxxx 会换），严格匹配会误判成「没配过对」。
++  // 家里只有一台设备、只有一条凭据时，按“唯一候选”直接认它。
++  if (!hit && known.length === 1 && found.length === 1) hit = found[0];
++  const line = '[recover] found=' + (found.map((f) => f.instance + ':' + f.port).join(',') || '-') +
++    ' known=' + (known.map((k) => k.instance + '@' + (k.peerHost || '-')).join(',') || '-') +
++    ' hit=' + (hit ? hit.instance : '-');
++  console.log(line);
++  if (process.env.BOXADB_LOG_FILE) { try { require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE, new Date().toISOString() + ' ' + line + '\n'); } catch {} }
+   if (!hit) return { ok: false, need: found.length ? 'pair' : 'manual-port', discovered: found,
+     reason: found.length ? '发现的实例没有已存凭据' : '未发现无线调试广播（可能是自动发现不可用，也可能开关确实没开）' };
+   const rec = ks.lookup(hit.instance);
+diff --git a/pair/mdns.js b/pair/mdns.js
+index dba466c..b27d199 100644
+--- a/pair/mdns.js
++++ b/pair/mdns.js
+@@ -60,13 +60,20 @@ function parse(buf) {
+   }
+   return out;
+ }
+-const SKIP_IF = /^(docker|br-|veth|virbr|br|lo|tun|tap|cni|flannel|kube)/;
+-function lanIPv4() {
+-  // 只认物理/业务网口：NAS 上 docker0 与一堆 br-* 桥接口会把组播发错网段
++// 只跳过虚拟/隧道网卡；**不能跳过 br* 与 bond***：绿联等 NAS 开了虚拟机后，
++// 业务地址常常挂在 br0 / br-lan 这类桥接口上，跳过它 ＝ 一个网卡都不剩，组播永远发不出去。
++const SKIP_IF = /^(docker|veth|virbr|tun|tap|cni|flannel|kube|lo)/;
++function lanIPv4(host) {
++  const want = host ? String(host).split('.').slice(0, 3).join('.') : null;
+   const out = [];
+   for (const [dev, addrs] of Object.entries(os.networkInterfaces())) {
+     if (SKIP_IF.test(dev)) continue;
+-    for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) out.push({ dev, address: a.address });
++    for (const a of addrs || []) {
++      if (a.family !== 'IPv4' || a.internal || a.address.startsWith('127.')) continue;
++      // 有目标时只发往和目标同 /24 的网卡，避免组播被送到 docker/其它网段
++      if (want && a.address.split('.').slice(0, 3).join('.') !== want) continue;
++      out.push({ dev, address: a.address });
++    }
+   }
+   return out.slice(0, 4);
+ }
+@@ -97,10 +104,17 @@ function buildQuery(names, qu) {
+ }
+ // 每个候选网口各开一对 socket（临时端口 / 5353），并分别发带与不带 QU 位的查询后合并：
+ // macOS 上应答回到临时端口，Linux 多网卡上只有走对网口 + 5353 才收得到 SRV
+-async function ask(names, ms) {
++async function ask(names, ms, host) {
+   const found = [];
+   const socks = [];
+-  for (const it of lanIPv4()) {
++  const ifaces = lanIPv4(host);
++  if (host && process.env.BOXADB_LOG_FILE) {
++    try {
++      require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE,
++        new Date().toISOString() + ' [mdns] host=' + host + ' ifaces=' + (ifaces.map((i) => i.dev + '/' + i.address).join(',') || '-') + '\n');
++    } catch {}
++  }
++  for (const it of ifaces) {
+     for (const port of [0, 5353]) {
+       const sk = await openSocket(port, it.address);
+       if (!sk) continue;
+@@ -116,11 +130,11 @@ async function ask(names, ms) {
+   for (const sk of socks) { try { sk.close(); } catch {} }
+   return found;
+ }
+-async function browse(service, ms = 1500) {
++async function browse(service, ms = 1500, host) {
+   const seen = new Map();
+-  let recs = await ask([service], ms);
++  let recs = await ask([service], ms, host);
+   const ptrs = [...new Set(recs.filter((r) => r.type === 'PTR' && r.name).map((r) => r.name))];
+-  if (ptrs.length) recs = recs.concat(await ask(ptrs, ms));
++  if (ptrs.length) recs = recs.concat(await ask(ptrs, ms, host));
+   for (const r of recs) {
+     if (r.type !== 'SRV') continue;
+     const inst = r.name.split('.')[0];
+@@ -128,8 +142,9 @@ async function browse(service, ms = 1500) {
+   }
+   return [...seen.values()];
+ }
+-const pairing = ms => browse(PAIRING, ms);
+-const connect = ms => browse(CONNECT, ms);
++// 兼容旧签名：(ms) 或 (ms, host)
++const pairing = (ms, host) => browse(PAIRING, ms, host);
++const connect = (ms, host) => browse(CONNECT, ms, host);
+ // 能否在本机发现 mDNS 广播：判据是「有没有和目标同一 /24 的网口」。
+ // NAT 容器里只有容器内网段（如 172.17/192.168.215），组播到不了局域网；NAS 版跑在主机上则同段可用。
+ function discoverable(host) {
 diff --git a/webapp_on.go b/webapp_on.go
-index 3555ce6..c3823cf 100644
+index 3555ce6..0909399 100644
 --- a/webapp_on.go
 +++ b/webapp_on.go
 @@ -8,7 +8,6 @@ import (
@@ -133,15 +355,14 @@ index 3555ce6..c3823cf 100644
  }
  
  func staticHandler() http.Handler {
-@@ -83,4 +87,10 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
+@@ -83,4 +87,9 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
  func privateOnlyDefault() bool { return true }
  
  // 自托管默认开内置 https（8766）：手机需要安全上下文；BRIDGE_HTTPS_PORT=0 可关。
 -func httpsDefault() string { return "8766" }
-+// UGOS 形态默认关：https 由系统网关提供，桥只跑纯 http + WS。
 +func httpsDefault() string {
 +	if ugosMode() {
-+		return "0"
++		return "0" // UGOS：https 由系统网关提供，桥只跑纯 http + WS
 +	}
 +	return "8766"
 +}
