@@ -1,5 +1,5 @@
 diff --git a/bridge.go b/bridge.go
-index 8628170..8ab2f2a 100644
+index 8628170..bc67f34 100644
 --- a/bridge.go
 +++ b/bridge.go
 @@ -22,6 +22,7 @@ import (
@@ -89,7 +89,18 @@ index 8628170..8ab2f2a 100644
  	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
  	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
  		sidecar.handle(w, r)
-@@ -346,6 +391,41 @@ func main() {
+@@ -278,6 +323,10 @@ func router(w http.ResponseWriter, r *http.Request) {
+ 		w.Write([]byte("boxadb bridge ok\n"))
+ 	case r.URL.Path == "/adb":
+ 		handleTunnel(w, r)
++	case strings.HasPrefix(r.URL.Path, "/nas/"):
++		if handleNas(w, r) {
++			return
++		}
+ 	default:
+ 		if static := staticHandler(); static != nil {
+ 			static.ServeHTTP(w, r) // 自托管形态：网页由本进程发出
+@@ -346,6 +395,41 @@ func main() {
  		os.Exit(healthCheck())
  	}
  	addr := net.JoinHostPort(listenHost(), listenPort())
@@ -131,28 +142,73 @@ index 8628170..8ab2f2a 100644
  	sidecar = startPairSidecar()
  	if sidecar != nil {
  		defer sidecar.stop()
+diff --git a/css/style.css b/css/style.css
+index 14dc719..8da9ff5 100644
+--- a/css/style.css
++++ b/css/style.css
+@@ -239,6 +239,20 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,220,132,.16)
+ .wl-log[hidden]{display:none}
+ #wl-close{background:transparent;color:#9fb0c0;border:1px solid #33414f}
+ #wl-close:hover{color:#fff;border-color:#4a5b6d;background:rgba(255,255,255,.05)}
++/* NAS 安装包选择器 */
++#nas-modal{position:fixed;inset:0;background:rgba(2,8,14,.66);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px}
++#nas-modal[hidden]{display:none}
++.nas-card{width:min(680px,calc(100% - 32px));max-height:80vh;display:flex;flex-direction:column}
++.nas-bar{display:flex;align-items:center;gap:10px;margin:6px 0 10px}
++.nas-bar code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(255,255,255,.07);padding:4px 8px;border-radius:6px;font-size:12.5px}
++.nas-list{flex:1;min-height:180px;max-height:46vh;overflow:auto;border:1px solid #263140;border-radius:10px;padding:6px}
++.nas-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;color:#c6d2de;font-size:13.5px}
++.nas-row:hover{background:rgba(61,220,132,.10);color:#fff}
++.nas-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
++.nas-row .sz{color:#8fa0b1;font-size:12.5px;flex:none}
++.nas-empty{padding:22px 12px;text-align:center;color:#8fa0b1;font-size:13px}
++.nas-foot{display:flex;align-items:center;gap:10px;margin-top:10px}
++#nas-note{margin:8px 0 0}
+ 
+ /* 响应式 */
+ @media(max-width:820px){
 diff --git a/index.html b/index.html
-index edcc94a..351b5cf 100644
+index 4e3b4bf..ac65820 100644
 --- a/index.html
 +++ b/index.html
-@@ -210,6 +210,15 @@
-       <h3>需要换成加密方式打开</h3>
-       <p>你现在是用 <b>http://</b>（不加密）访问的。浏览器有条安全规定：<b>不加密的页面不能生成 ADB 密钥</b>，所以连不上盒子。这跟盒子、网络都没关系，换个地址就能解决。</p>
+@@ -95,6 +95,8 @@
+         <p class="dz-title">把安装包拖到这里</p>
+         <p class="muted">或</p>
+         <button class="btn ghost" id="pick-files">选择文件</button>
++        <!-- 仅自托管形态（NAS）显示：从绿联共享文件夹里挑安装包 -->
++        <button class="btn ghost" id="pick-nas" hidden>从 NAS 选择</button>
+         <input type="file" id="file-input" accept=".apk,.xapk,.apks,.apkm,application/vnd.android.package-archive" multiple hidden />
+       </div>
  
-+      <!-- 绿联 UGOS 引导：从系统桌面打开（https 由绿联网关提供，无需证书操作） -->
-+      <div id="insecure-ugos" hidden>
-+        <p>绿联 UGOS 版<b>盒子助手</b>请从 <b>UGOS 桌面的「盒子助手」图标</b>打开（或应用中心启动）。</p>
-+        <ol class="modal-steps">
-+          <li>系统会通过绿联的加密网关访问应用，自动获得 HTTPS 安全上下文，<b>无需任何证书操作</b>。</li>
-+          <li>当前直接访问桥端口的 http 页面无法生成 ADB 密钥（浏览器安全限制），关掉即可。</li>
-+        </ol>
+@@ -333,6 +335,26 @@
+     </div>
+   </div>
+ 
++  <!-- NAS 安装包选择器（自托管形态） -->
++  <div id="nas-modal" hidden>
++    <div class="modal-card nas-card">
++      <h3>从 NAS 选择安装包</h3>
++      <div class="nas-bar">
++        <button id="nas-up" class="btn subtle" type="button" title="返回上一级">↑ 上一级</button>
++        <code id="nas-crumb">/</code>
++        <span class="spacer"></span>
++        <button id="nas-refresh" class="btn subtle" type="button">重新扫描</button>
 +      </div>
++      <div class="nas-list" id="nas-list" role="listbox" aria-label="NAS 安装包列表"></div>
++      <p class="modal-sub" id="nas-note" hidden></p>
++      <div class="nas-foot">
++        <span class="muted">只显示 .apk / .xapk / .apkm · 授权在 控制面板 → 关于本机 → 应用 → 盒子助手 → 配置；改动后点「重置应用」生效（会清空应用数据，需重新配对）</span>
++        <span class="spacer"></span>
++        <button id="nas-close" class="btn subtle" type="button">关闭</button>
++      </div>
++    </div>
++  </div>
 +
-       <!-- 飞牛版引导：跳飞牛加密主页 -->
-       <div id="insecure-fnos">
-         <button id="insecure-fix" class="btn">🔒 打开飞牛加密主页</button>
+   <!-- 仅 URL 带 ?diag=1 时由 app.js 显示：把连不上的原因分类，便于远程定位机型问题 -->
+   <pre id="diag" hidden></pre>
+ 
 diff --git a/js/app.js b/js/app.js
-index 21c3163..902f69d 100644
+index 21c3163..9a058b6 100644
 --- a/js/app.js
 +++ b/js/app.js
 @@ -217,7 +217,6 @@ async function showPortDialog(ip, reason){
@@ -163,7 +219,89 @@ index 21c3163..902f69d 100644
    if(pinp) pinp.value = '';
    if(cinp) cinp.value = '';
    if(ok) ok.textContent = canPair ? '连接并固定端口' : '连接并固定端口';
-@@ -533,9 +532,17 @@ function showInsecureDialog(){
+@@ -411,9 +410,81 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
+   dz.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
+   $('#install-all').addEventListener('click',installAll);
+   $('#clear-queue').addEventListener('click',clearQueue);
++  bindNas();
++  if (SELF_HOSTED) {
++    // 有 shared 授权目录就显示入口；没授权也显示，点了会给引导文案
++    const b = $('#pick-nas');
++    if (b) nasApi('').then(() => { b.hidden = false; }).catch(() => { b.hidden = true; });
++  }
+   updateSummary();
+ }
+ 
++
++// ── 从 NAS 选择安装包（自托管形态：绿联授权文件夹 / 飞牛 NAS 文件）──────
++let nasPath = '';
++async function nasApi(path){
++  const T = await tango();
++  const r = await fetch(`${T.BRIDGE_BASE}/nas/list?path=${encodeURIComponent(path || '')}`);
++  if (!r.ok) throw new Error('HTTP ' + r.status);
++  return r.json();
++}
++// 伪装成 File：只实现安装流程真正用到的 name / size / arrayBuffer()
++function nasLike(e){
++  return {
++    name: e.name, size: e.size || 0,
++    async arrayBuffer(){
++      const T = await tango();
++      const r = await fetch(`${T.BRIDGE_BASE}/nas/file?path=${encodeURIComponent(e.path)}`);
++      if (!r.ok) throw new Error('从 NAS 读取失败（HTTP ' + r.status + '）');
++      return await r.arrayBuffer();
++    },
++  };
++}
++function nasShowNote(text){
++  const n = $('#nas-note'); if (!n) return;
++  n.hidden = !text; n.textContent = text || '';
++}
++async function nasRender(path){
++  const list = $('#nas-list'); if (!list) return;
++  list.innerHTML = '<div class="nas-empty">读取中…</div>';
++  const crumb = $('#nas-crumb'); if (crumb) crumb.textContent = '/' + (path || '');
++  let d;
++  try { d = await nasApi(path); }
++  catch (err) { list.innerHTML = ''; nasShowNote('NAS 接口不可用：' + err.message); return; }
++  nasShowNote(d.ok ? '' : (d.hint || d.message || '读取失败'));
++  const items = d.items || [];
++  if (!items.length) { list.innerHTML = '<div class="nas-empty">这里没有 apk / xapk / apkm</div>'; return; }
++  nasPath = d.path || path || '';
++  list.innerHTML = '';
++  for (const e of items) {
++    const row = document.createElement('div');
++    row.className = 'nas-row'; row.setAttribute('role', 'option'); row.tabIndex = 0;
++    const meta = e.dir ? '' : `${formatBytes(e.size)} · ${new Date((e.mtime || 0) * 1000).toLocaleDateString()}`;
++    row.innerHTML = `<span>${e.dir ? '📁' : '📦'}</span><span class="nm">${escapeHtml(e.name)}</span><span class="sz">${meta}</span>`;
++    const act = () => {
++      if (e.dir) { nasRender(e.path); return; }
++      addFiles([nasLike(e)]);
++      $('#nas-modal').hidden = true;
++      toast(`已加入队列：${e.name}`, 'info', 3200);
++    };
++    row.addEventListener('click', act);
++    row.addEventListener('keydown', ev => { if (ev.key === 'Enter') act(); });
++    list.appendChild(row);
++  }
++}
++function bindNas(){
++  const btn = $('#pick-nas'); if (!btn) return;
++  btn.addEventListener('click', () => { $('#nas-modal').hidden = false; nasRender(''); });
++  $('#nas-close').addEventListener('click', () => { $('#nas-modal').hidden = true; });
++  $('#nas-refresh').addEventListener('click', () => nasRender(nasPath));
++  $('#nas-up').addEventListener('click', () => {
++    const parts = (nasPath || '').split('/').filter(Boolean);
++    parts.pop();
++    nasRender(parts.join('/'));
++  });
++  $('#nas-modal').addEventListener('click', e => { if (e.target.id === 'nas-modal') $('#nas-modal').hidden = true; });
++}
++
+ // ── 应用管理 ───────────────────────────────────────────
+ async function refreshApps(){ const body=$('#apps-body');
+   if(!state.connected){ body.innerHTML='<div class="empty">未连接设备 — 连接后将在此显示应用列表。</div>'; return; }
+@@ -533,9 +604,17 @@ function showInsecureDialog(){
    //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
    const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
    const ownTls=/^\d{2,5}$/.test(tlsPort);
@@ -183,6 +321,386 @@ index 21c3163..902f69d 100644
  
    const httpsUrl=ownTls
      ? `https://${location.hostname}:${tlsPort}${location.pathname}${location.search}` : '';
+diff --git a/nas.go b/nas.go
+new file mode 100644
+index 0000000..cca9e76
+--- /dev/null
++++ b/nas.go
+@@ -0,0 +1,374 @@
++package main
++
++// 从 NAS 选择安装包（apk / xapk / apkm）。
++//
++// 绿联 UGOS 的机制：project.yaml 里 allow_add_access_path: true 后，用户可在
++// 「应用中心 → 盒子助手 → 设置 → 访问路径」里主动授权文件夹；已授权文件夹会被
++// 软链到安装目录的 shared 下（绝对路径见环境变量 UGAPP_SHARED_DIR）。
++// 系统没有给 Web 端提供“选择 NAS 文件”的能力（cloudWindow 的 getLocalPath 是 PC only），
++// 所以这里由桥只读地列目录，前端自己做选择器。
++//
++// 端点：
++//   GET /nas/list?path=<相对路径>   目录列表（文件只列 apk/xapk/apkm）
++//   GET /nas/file?path=<相对路径>   读取文件（支持 Range，交给前端 arrayBuffer 安装）
++// 未授权（没有 shared 目录）时返回 ok:false + 引导文案，不报错。
++
++import (
++	"encoding/json"
++	"net/http"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"time"
++)
++
++const nasMaxEntries = 2000
++
++func writeJSON(w http.ResponseWriter, status int, v any) {
++	w.Header().Set("Content-Type", "application/json; charset=utf-8")
++	w.WriteHeader(status)
++	_ = json.NewEncoder(w).Encode(v)
++}
++
++var nasExtOK = map[string]bool{".apk": true, ".xapk": true, ".apkm": true}
++
++type nasEntry struct {
++	Name  string `json:"name"`
++	Path  string `json:"path"`
++	Dir   bool   `json:"dir"`
++	Size  int64  `json:"size,omitempty"`
++	MTime int64  `json:"mtime,omitempty"`
++}
++
++// nasRoot 是一个被授权的文件夹：shared 下的一层条目（通常是软链）
++type nasRoot struct {
++	Name string // 展示与寻址用的目录名
++	Real string // 解析软链后的真实路径
++}
++
++func sharedDir() string {
++	d := strings.TrimSpace(os.Getenv("UGAPP_SHARED_DIR"))
++	if d == "" {
++		if inst := os.Getenv("UGAPP_INSTALL_DIR"); inst != "" {
++			d = filepath.Join(inst, "shared")
++		}
++	}
++	if d == "" {
++		return ""
++	}
++	if _, err := os.Stat(d); err != nil {
++		return ""
++	}
++	return d
++}
++
++// 向导/配置里选的安装包目录（parameters: type path → 环境变量 BOXADB_PKG_DIR）
++func paramRoots() []nasRoot {
++	p := strings.TrimSpace(os.Getenv("BOXADB_PKG_DIR"))
++	if p == "" {
++		return nil
++	}
++	real, err := filepath.EvalSymlinks(p)
++	if err != nil {
++		return nil
++	}
++	st, err := os.Stat(real)
++	if err != nil || !st.IsDir() {
++		return nil
++	}
++	return []nasRoot{{Name: filepath.Base(real), Real: real}}
++}
++
++// 授权目录集合 = shared 下第一层的目录/软链目录 + 向导里选的安装包目录
++// （深层软链不跟随，防止越界）
++func nasRoots() []nasRoot {
++	shared := sharedDir()
++	if shared == "" {
++		return dedupeRoots(paramRoots())
++	}
++	des, err := os.ReadDir(shared)
++	if err != nil {
++		return nil
++	}
++	out := []nasRoot{}
++	for _, de := range des {
++		if strings.HasPrefix(de.Name(), ".") {
++			continue
++		}
++		p := filepath.Join(shared, de.Name())
++		real, err := filepath.EvalSymlinks(p)
++		if err != nil {
++			continue
++		}
++		st, err := os.Stat(real)
++		if err != nil || !st.IsDir() {
++			continue
++		}
++		out = append(out, nasRoot{Name: de.Name(), Real: real})
++	}
++	out = append(out, paramRoots()...)
++	out = dedupeRoots(out)
++	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
++	return out
++}
++
++func dedupeRoots(in []nasRoot) []nasRoot {
++	seen := map[string]bool{}
++	out := make([]nasRoot, 0, len(in))
++	for _, r := range in {
++		if seen[r.Real] {
++			continue
++		}
++		seen[r.Real] = true
++		out = append(out, r)
++	}
++	return out
++}
++
++func within(root, target string) bool {
++	if target == root {
++		return true
++	}
++	sep := string(filepath.Separator)
++	return strings.HasPrefix(target, strings.TrimSuffix(root, sep)+sep)
++}
++
++// resolveNas：以「授权目录名/相对路径」寻址；返回真实路径与命中的授权目录
++func resolveNas(rel string) (nasRoot, string, string) {
++	rel = strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(rel), "\\", "/"), "/")
++	if rel == "." {
++		rel = ""
++	}
++	roots := nasRoots()
++	if len(roots) == 0 {
++		return nasRoot{}, "", "还没有授权可访问的文件夹"
++	}
++	if rel == "" {
++		return nasRoot{}, "", ""
++	}
++	name, rest := rel, ""
++	if i := strings.Index(rel, "/"); i >= 0 {
++		name, rest = rel[:i], rel[i+1:]
++	}
++	var hit *nasRoot
++	for i := range roots {
++		if roots[i].Name == name {
++			hit = &roots[i]
++			break
++		}
++	}
++	if hit == nil {
++		return nasRoot{}, "", "该目录不是已授权的文件夹"
++	}
++	if strings.Contains(rest, "..") {
++		return *hit, "", "路径不合法"
++	}
++	cand := hit.Real
++	if rest != "" {
++		cand = filepath.Join(hit.Real, filepath.FromSlash(rest))
++	}
++	real, err := filepath.EvalSymlinks(cand)
++	if err != nil {
++		if os.IsNotExist(err) {
++			return *hit, "", "文件或目录不存在（可能已被移动或删除）"
++		}
++		return *hit, "", "路径不可读：" + err.Error()
++	}
++	if !within(hit.Real, real) {
++		return *hit, "", "该路径不在已授权的文件夹范围内"
++	}
++	return *hit, real, ""
++}
++
++func nasDisabled(w http.ResponseWriter) {
++	writeJSON(w, http.StatusOK, map[string]any{
++		"ok": false, "need": "authorize", "items": []nasEntry{},
++		"hint": "没有找到安装包：请打开 控制面板 → 关于本机 → 应用 → 盒子助手 → 配置，新增/修改「可访问文件夹」后保存，再点「重置应用」使其生效（重置会清空应用数据，已配对的盒子需重新配对一次），然后回来点「重新扫描」",
++	})
++}
++
++// 根层：列出所有已授权文件夹
++func nasListRoots(w http.ResponseWriter) {
++	roots := nasRoots()
++	if len(roots) == 0 {
++		nasDisabled(w)
++		return
++	}
++	items := make([]nasEntry, 0, len(roots))
++	for _, r := range roots {
++		st, _ := os.Stat(r.Real)
++		mt := int64(0)
++		if st != nil {
++			mt = st.ModTime().Unix()
++		}
++		items = append(items, nasEntry{Name: r.Name, Path: r.Name, Dir: true, MTime: mt})
++	}
++	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": "", "items": items})
++}
++
++func handleNasList(w http.ResponseWriter, r *http.Request) {
++	rel := r.URL.Query().Get("path")
++	hit, real, errText := resolveNas(rel)
++	if errText == "" && rel == "" {
++		nasListRoots(w)
++		return
++	}
++	if errText != "" {
++		if hit.Name == "" && len(nasRoots()) == 0 {
++			nasDisabled(w)
++			return
++		}
++		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": errText, "items": []nasEntry{}})
++		return
++	}
++	st, err := os.Stat(real)
++	if err != nil || !st.IsDir() {
++		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": "这不是一个目录", "items": []nasEntry{}})
++		return
++	}
++	des, err := os.ReadDir(real)
++	if err != nil {
++		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "message": "目录不可读：" + err.Error(), "items": []nasEntry{}})
++		return
++	}
++	items := make([]nasEntry, 0, 64)
++	for _, de := range des {
++		if len(items) >= nasMaxEntries {
++			break
++		}
++		name := de.Name()
++		if strings.HasPrefix(name, ".") {
++			continue
++		}
++		p := filepath.Join(real, name)
++		info, err := de.Info()
++		if err != nil {
++			continue
++		}
++		e := nasEntry{Name: name, Path: strings.TrimLeft(rel+"/"+name, "/"), MTime: info.ModTime().Unix()}
++		// 目录（含软链目录）必须仍落在授权根内，否则不显示，避免点进去才报错
++		if rt, err := os.Stat(p); err == nil && rt.IsDir() {
++			real2, e2 := filepath.EvalSymlinks(p)
++			if e2 != nil || !within(hit.Real, real2) {
++				continue
++			}
++			e.Dir = true
++			e.MTime = rt.ModTime().Unix()
++			items = append(items, e)
++			continue
++		}
++		switch {
++		case de.IsDir():
++			// 目录全部显示：即使读不了也让用户点进去看具体报错，而不是静默消失
++			e.Dir = true
++		default:
++			// 软链目录也当目录显示；普通文件只留安装包
++			if rt, err := os.Stat(p); err == nil && rt.IsDir() {
++				e.Dir = true
++				e.MTime = rt.ModTime().Unix()
++			} else if nasExtOK[strings.ToLower(filepath.Ext(name))] {
++				e.Size = info.Size()
++			} else {
++				continue
++			}
++		}
++		items = append(items, e)
++	}
++	sort.Slice(items, func(i, j int) bool {
++		if items[i].Dir != items[j].Dir {
++			return items[i].Dir
++		}
++		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
++	})
++	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": rel, "items": items})
++}
++
++func handleNasFile(w http.ResponseWriter, r *http.Request) {
++	_, real, errText := resolveNas(r.URL.Query().Get("path"))
++	if errText != "" {
++		http.Error(w, errText, http.StatusForbidden)
++		return
++	}
++	st, err := os.Stat(real)
++	if err != nil || st.IsDir() {
++		http.Error(w, "文件不存在", http.StatusNotFound)
++		return
++	}
++	if !nasExtOK[strings.ToLower(filepath.Ext(real))] {
++		http.Error(w, "只支持 apk / xapk / apkm", http.StatusForbidden)
++		return
++	}
++	f, err := os.Open(real)
++	if err != nil {
++		http.Error(w, "文件不可读", http.StatusForbidden)
++		return
++	}
++	defer f.Close()
++	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
++	http.ServeContent(w, r, filepath.Base(real), st.ModTime().Round(time.Second), f)
++}
++
++// handleNasDiag：把「为什么看不到授权目录」的全部判据摊开，避免靠猜排查
++func handleNasDiag(w http.ResponseWriter) {
++	env := func(k string) string { return os.Getenv(k) }
++	shared := sharedDir()
++	type item struct {
++		Name     string `json:"name"`
++		Mode     string `json:"mode,omitempty"`
++		Resolved string `json:"resolved,omitempty"`
++		Err      string `json:"err,omitempty"`
++		IsDir    bool   `json:"isDir"`
++	}
++	out := []item{}
++	if shared != "" {
++		des, err := os.ReadDir(shared)
++		if err != nil {
++			out = append(out, item{Name: "(读取 shared 失败)", Err: err.Error()})
++		}
++		for _, de := range des {
++			p := filepath.Join(shared, de.Name())
++			it := item{Name: de.Name()}
++			if st, err := os.Lstat(p); err == nil {
++				it.Mode = st.Mode().String()
++			} else {
++				it.Err = "lstat: " + err.Error()
++			}
++			real, err := filepath.EvalSymlinks(p)
++			if err != nil {
++				it.Err = strings.TrimSpace(it.Err + " evalsymlink: " + err.Error())
++			} else {
++				it.Resolved = real
++				if st, err := os.Stat(real); err != nil {
++					it.Err = strings.TrimSpace(it.Err + " stat: " + err.Error())
++				} else {
++					it.IsDir = st.IsDir()
++				}
++			}
++			out = append(out, it)
++		}
++	}
++	writeJSON(w, http.StatusOK, map[string]any{
++		"envUGAPP_SHARED_DIR":  env("UGAPP_SHARED_DIR"),
++		"envUGAPP_INSTALL_DIR": env("UGAPP_INSTALL_DIR"),
++		"envBOXADB_PKG_DIR":    env("BOXADB_PKG_DIR"),
++		"sharedResolved":       shared,
++		"entries":              out,
++		"roots":                len(nasRoots()),
++	})
++}
++
++func handleNas(w http.ResponseWriter, r *http.Request) bool {
++	switch r.URL.Path {
++	case "/nas/diag":
++		handleNasDiag(w)
++		return true
++	case "/nas/list":
++		handleNasList(w, r)
++	case "/nas/file":
++		handleNasFile(w, r)
++	default:
++		return false
++	}
++	return true
++}
 diff --git a/pair/api.js b/pair/api.js
 index f9c5e6b..df3d733 100644
 --- a/pair/api.js
@@ -325,44 +843,406 @@ index dba466c..b27d199 100644
  // 能否在本机发现 mDNS 广播：判据是「有没有和目标同一 /24 的网口」。
  // NAT 容器里只有容器内网段（如 172.17/192.168.215），组播到不了局域网；NAS 版跑在主机上则同段可用。
  function discoverable(host) {
-diff --git a/webapp_on.go b/webapp_on.go
-index 3555ce6..0909399 100644
---- a/webapp_on.go
-+++ b/webapp_on.go
-@@ -8,7 +8,6 @@ import (
- 	"io/fs"
- 	"log"
- 	"net/http"
+diff --git a/wireless.go b/wireless.go
+deleted file mode 100644
+index bbccb2e..0000000
+--- a/wireless.go
++++ /dev/null
+@@ -1,397 +0,0 @@
+-package main
+-
+-// 无线调试（Android 11+ 配对）支持：桥不自己实现 SPAKE2/TLS-PSK，
+-// 而是调用随包内置的官方 adb 完成「配对 → 连上无线调试端口 → tcpip 5555 固定端口」。
+-// 之后浏览器端的 Tango 照常连 5555（首次会弹一次「允许 USB 调试」）。
+-//
+-// 端点（均在反代前缀下，仅自托管形态可用）：
+-//   GET  /wireless/discover  列出 mDNS 发现的无线调试设备（配对端口 / 连接端口）
+-//   POST /wireless/pair      {host,pairPort,code,connPort?} 配对并固定 5555
+-//   POST /wireless/ensure    {host} 盒子重启后端口变了，用已配对凭据重新固定 5555
+-
+-import (
+-	"context"
+-	"encoding/json"
+-	"net"
+-	"net/http"
 -	"os"
- 	"strings"
- 	"time"
- )
-@@ -23,10 +22,15 @@ var webappFS embed.FS
- // 自托管标记：运行时注入 index.html，让前端把桥地址切到「同源 + 前缀」。
- // 不改 JS 源码：仓库前端与镜像前端字节一致。子路径部署用 BRIDGE_BASE_PATH（如 /boxadb）。
- func bridgeMeta() string {
--	prefix := os.Getenv("BRIDGE_BASE_PATH")
-+	prefix := ugosBasePath() // BRIDGE_BASE_PATH 优先；UGOS 形态默认 /boxadb
-+	platform := ""
-+	if ugosMode() {
-+		platform = `<meta name="boxadb-platform" content="ugos">`
-+	}
- 	return `<meta name="boxadb-mode" content="selfhosted">` +
- 		`<meta name="boxadb-prefix" content="` + prefix + `">` +
--		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">`
-+		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">` +
-+		platform
- }
- 
- func staticHandler() http.Handler {
-@@ -83,4 +87,9 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
- func privateOnlyDefault() bool { return true }
- 
- // 自托管默认开内置 https（8766）：手机需要安全上下文；BRIDGE_HTTPS_PORT=0 可关。
--func httpsDefault() string { return "8766" }
-+func httpsDefault() string {
-+	if ugosMode() {
-+		return "0" // UGOS：https 由系统网关提供，桥只跑纯 http + WS
-+	}
-+	return "8766"
-+}
+-	"os/exec"
+-	"path/filepath"
+-	"regexp"
+-	"strconv"
+-	"strings"
+-	"sync"
+-	"time"
+-)
+-
+-var adbMu sync.Mutex // adb 是单例服务，所有调用串行
+-
+-// adb 自己的 server 端口与桌面上的 adb 隔离，避免互相干扰
+-const adbServerPort = "5038"
+-
+-// ── 路径与环境 ─────────────────────────────────────────
+-
+-func dataDir() string {
+-	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
+-		return d
+-	}
+-	if d := os.Getenv("UGAPP_DATA_DIR"); d != "" {
+-		return d
+-	}
+-	if d, err := os.UserCacheDir(); err == nil {
+-		return filepath.Join(d, "boxadb")
+-	}
+-	return os.TempDir()
+-}
+-
+-// adb 与桥同目录（UPK: rootfs_amd64/bin/adb），可用 BRIDGE_ADB 覆盖
+-func adbBin() string {
+-	if p := os.Getenv("BRIDGE_ADB"); p != "" {
+-		return p
+-	}
+-	if exe, err := os.Executable(); err == nil {
+-		p := filepath.Join(filepath.Dir(exe), "adb")
+-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+-			return p
+-		}
+-	}
+-	return "adb"
+-}
+-
+-// 独立的 HOME：adb 密钥（adbkey）落在应用数据目录，不碰系统任何位置
+-func adbHome() (string, error) {
+-	home := filepath.Join(dataDir(), "adbhome")
+-	if err := os.MkdirAll(filepath.Join(home, ".android"), 0o700); err != nil {
+-		return "", err
+-	}
+-	return home, nil
+-}
+-
+-func runAdb(timeout time.Duration, args ...string) (string, error) {
+-	home, err := adbHome()
+-	if err != nil {
+-		return "", err
+-	}
+-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+-	defer cancel()
+-	cmd := exec.CommandContext(ctx, adbBin(), args...)
+-	cmd.Env = append(os.Environ(),
+-		"HOME="+home,
+-		"ANDROID_USER_HOME="+filepath.Join(home, ".android"),
+-		"ANDROID_ADB_SERVER_PORT="+adbServerPort,
+-	)
+-	out, err := cmd.CombinedOutput()
+-	text := strings.TrimSpace(string(out))
+-	if len(text) > 2048 {
+-		text = text[len(text)-2048:]
+-	}
+-	if err != nil && text == "" {
+-		text = err.Error()
+-	}
+-	return text, err
+-}
+-
+-// ── mDNS 发现 ──────────────────────────────────────────
+-
+-type wirelessDevice struct {
+-	Instance    string `json:"instance"`
+-	Host        string `json:"host"`
+-	PairPort    int    `json:"pairPort,omitempty"`
+-	ConnectPort int    `json:"connectPort,omitempty"`
+-}
+-
+-// adb mdns services 输出示例：
+-//
+-//	List of discovered mdns services
+-//	adb-44071FDH2003CX	_adb-tls-pairing._tcp.	192.168.66.172:37123
+-//	adb-44071FDH2003CX	_adb-tls-connect._tcp.	192.168.66.172:38451
+-func parseMdnsServices(out string) []wirelessDevice {
+-	byKey := map[string]*wirelessDevice{}
+-	order := []string{}
+-	for _, line := range strings.Split(out, "\n") {
+-		fields := strings.Fields(strings.TrimSpace(line))
+-		if len(fields) < 3 {
+-			continue
+-		}
+-		addr := fields[len(fields)-1]
+-		host, portText, ok := strings.Cut(addr, ":")
+-		if !ok {
+-			continue
+-		}
+-		port, err := strconv.Atoi(portText)
+-		if err != nil || !isIPv4(host) {
+-			continue
+-		}
+-		service := strings.ToLower(strings.Join(fields[1:len(fields)-1], " "))
+-		key := fields[0] + "|" + host
+-		d, seen := byKey[key]
+-		if !seen {
+-			d = &wirelessDevice{Instance: fields[0], Host: host}
+-			byKey[key] = d
+-			order = append(order, key)
+-		}
+-		switch {
+-		case strings.Contains(service, "_adb-tls-pairing"):
+-			d.PairPort = port
+-		case strings.Contains(service, "_adb-tls-connect"):
+-			d.ConnectPort = port
+-		}
+-	}
+-	list := make([]wirelessDevice, 0, len(order))
+-	for _, k := range order {
+-		list = append(list, *byKey[k])
+-	}
+-	return list
+-}
+-
+-func discoverWireless() ([]wirelessDevice, string, bool) {
+-	out, _ := runAdb(10*time.Second, "mdns", "services")
+-	ok := strings.Contains(out, "List of discovered mdns services")
+-	return parseMdnsServices(out), out, ok
+-}
+-
+-// ── 连通性 ─────────────────────────────────────────────
+-
+-func tcpReachable(host string, port int, timeout time.Duration) bool {
+-	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
+-	if err != nil {
+-		return false
+-	}
+-	c.Close()
+-	return true
+-}
+-
+-var pairedRe = regexp.MustCompile(`(?i)successfully paired to .*\[guid=([^\]]+)\]`)
+-
+-// ── HTTP 端点 ──────────────────────────────────────────
+-
+-type adbStep struct {
+-	Name   string `json:"name"`
+-	OK     bool   `json:"ok"`
+-	Output string `json:"output"`
+-}
+-
+-type wirelessResp struct {
+-	OK       bool             `json:"ok"`
+-	Message  string           `json:"message,omitempty"`
+-	Hint     string           `json:"hint,omitempty"`
+-	Need     string           `json:"need,omitempty"`
+-	Host     string           `json:"host,omitempty"`
+-	Port     int              `json:"port,omitempty"`
+-	Instance string           `json:"instance,omitempty"`
+-	Already  bool             `json:"already,omitempty"`
+-	Devices  []wirelessDevice `json:"devices,omitempty"`
+-	Steps    []adbStep        `json:"steps,omitempty"`
+-}
+-
+-func writeJSON(w http.ResponseWriter, v any) {
+-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+-	_ = json.NewEncoder(w).Encode(v)
+-}
+-
+-func handleWirelessDiscover(w http.ResponseWriter, r *http.Request) {
+-	if r.Method != "GET" && r.Method != "POST" {
+-		w.WriteHeader(405)
+-		return
+-	}
+-	adbMu.Lock()
+-	devices, raw, ok := discoverWireless()
+-	adbMu.Unlock()
+-	resp := wirelessResp{OK: true, Devices: devices}
+-	if !ok {
+-		// adb 缺失 / 起不来：把原始输出带回去，方便排查
+-		resp.OK = false
+-		resp.Message = "内置 adb 不可用"
+-		resp.Hint = "打包时应把 adb 放在桥同目录（bin/adb）；也可用 BRIDGE_ADB 指定路径"
+-		resp.Steps = []adbStep{{Name: "adb mdns services", OK: false, Output: raw}}
+-	} else if len(devices) == 0 {
+-		resp.Message = "没有发现正在广播的设备"
+-		resp.Hint = "确认电视上「无线调试」已打开（盒子重启后会自动关掉），或直接手填配对端口和配对码"
+-	}
+-	writeJSON(w, resp)
+-}
+-
+-type pairRequest struct {
+-	Host     string `json:"host"`
+-	PairPort int    `json:"pairPort"`
+-	Code     string `json:"code"`
+-	ConnPort int    `json:"connPort"`
+-}
+-
+-func handleWirelessPair(w http.ResponseWriter, r *http.Request) {
+-	if r.Method != "POST" {
+-		w.WriteHeader(405)
+-		return
+-	}
+-	var req pairRequest
+-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+-		writeJSON(w, wirelessResp{OK: false, Message: "请求格式不正确"})
+-		return
+-	}
+-	req.Host = strings.TrimSpace(req.Host)
+-	req.Code = strings.TrimSpace(req.Code)
+-	if !isIPv4(req.Host) || !targetAllowed(req.Host) {
+-		writeJSON(w, wirelessResp{OK: false, Message: "目标地址必须是局域网内的盒子 IPv4"})
+-		return
+-	}
+-	if req.PairPort < 1 || req.PairPort > 65535 {
+-		writeJSON(w, wirelessResp{OK: false, Message: "配对端口请填 1-65535 的数字"})
+-		return
+-	}
+-	if !regexp.MustCompile(`^\d{6}$`).MatchString(req.Code) {
+-		writeJSON(w, wirelessResp{OK: false, Message: "配对码是 6 位数字（电视配对窗口上那串）"})
+-		return
+-	}
+-
+-	adbMu.Lock()
+-	defer adbMu.Unlock()
+-
+-	steps := []adbStep{}
+-	pairAddr := net.JoinHostPort(req.Host, strconv.Itoa(req.PairPort))
+-	pairOut, _ := runAdb(60*time.Second, "pair", pairAddr, req.Code)
+-	paired := strings.Contains(strings.ToLower(pairOut), "successfully paired")
+-	steps = append(steps, adbStep{Name: "配对 " + pairAddr, OK: paired, Output: pairOut})
+-	if !paired {
+-		hint := "配对中断，请确认配对窗口仍停留在电视上，配对码没过期"
+-		if strings.Contains(strings.ToLower(pairOut), "refused") || strings.Contains(strings.ToLower(pairOut), "timed out") {
+-			hint = "连不上配对端口，请确认配对窗口是打开状态、端口没填错"
+-		}
+-		writeJSON(w, wirelessResp{OK: false, Message: "配对失败", Hint: hint, Steps: steps})
+-		return
+-	}
+-
+-	instance := ""
+-	if m := pairedRe.FindStringSubmatch(pairOut); len(m) == 2 {
+-		instance = m[1]
+-	}
+-
+-	// 连接端口：优先用户填的，否则按 guid 从 mDNS 里配对
+-	connPort := req.ConnPort
+-	if connPort == 0 {
+-		devices, _, _ := discoverWireless()
+-		for _, d := range devices {
+-			if d.Host != req.Host || d.ConnectPort == 0 {
+-				continue
+-			}
+-			if instance == "" || d.Instance == instance {
+-				connPort = d.ConnectPort
+-				break
+-			}
+-		}
+-	}
+-	if connPort == 0 {
+-		writeJSON(w, wirelessResp{OK: false, Message: "已配对成功，但没查到连接端口", Need: "conn-port",
+-			Hint: "把电视「无线调试」第一屏显示的那串 IP:端口里的端口填到「连接端口」再来一次", Steps: steps})
+-		return
+-	}
+-
+-	serial := net.JoinHostPort(req.Host, strconv.Itoa(connPort))
+-	connOut, _ := runAdb(25*time.Second, "connect", serial)
+-	connected := strings.Contains(strings.ToLower(connOut), "connected to") || strings.Contains(strings.ToLower(connOut), "already connected")
+-	steps = append(steps, adbStep{Name: "连接 " + serial, OK: connected, Output: connOut})
+-	if !connected {
+-		writeJSON(w, wirelessResp{OK: false, Message: "配对成功，但连接无线调试端口失败", Steps: steps,
+-			Hint: "请照电视「无线调试」第一屏核对端口号；配对码页面填的端口不是连接端口"})
+-		return
+-	}
+-
+-	pinOut, _ := runAdb(20*time.Second, "-s", serial, "tcpip", "5555")
+-	pinned := strings.Contains(strings.ToLower(pinOut), "restarting in tcp mode") || strings.Contains(pinOut, "5555")
+-	steps = append(steps, adbStep{Name: "固定端口 tcpip 5555", OK: pinned, Output: pinOut})
+-
+-	// adbd 重启需要一点时间，最多等 3 秒
+-	reachable := false
+-	for i := 0; i < 6 && !reachable; i++ {
+-		time.Sleep(500 * time.Millisecond)
+-		reachable = tcpReachable(req.Host, 5555, time.Second)
+-	}
+-	steps = append(steps, adbStep{Name: "检查 5555", OK: reachable,
+-		Output: map[bool]string{true: "5555 已可连接", false: "5555 暂不可连接"}[reachable]})
+-
+-	resp := wirelessResp{OK: reachable, Host: req.Host, Port: 5555, Instance: instance, Steps: steps}
+-	if reachable {
+-		resp.Message = "配对成功，已固定到 5555"
+-		resp.Hint = "回到上面点「连接」即可；第一次电视会弹「允许 USB 调试」，用遥控器点允许"
+-	} else {
+-		resp.Message = "配对成功，但 5555 还没起来"
+-		resp.Hint = "等两秒再点一次「修复连接」，或者确认盒子上没有禁用 adb tcpip"
+-	}
+-	writeJSON(w, resp)
+-}
+-
+-type ensureRequest struct {
+-	Host string `json:"host"`
+-}
+-
+-// 盒子重启后无线调试端口会变：用已配对的凭据重新连上并把端口固定回 5555
+-func handleWirelessEnsure(w http.ResponseWriter, r *http.Request) {
+-	if r.Method != "POST" {
+-		w.WriteHeader(405)
+-		return
+-	}
+-	var req ensureRequest
+-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+-		writeJSON(w, wirelessResp{OK: false, Message: "请求格式不正确"})
+-		return
+-	}
+-	req.Host = strings.TrimSpace(req.Host)
+-	if !isIPv4(req.Host) || !targetAllowed(req.Host) {
+-		writeJSON(w, wirelessResp{OK: false, Message: "目标地址必须是局域网内的盒子 IPv4"})
+-		return
+-	}
+-
+-	adbMu.Lock()
+-	defer adbMu.Unlock()
+-
+-	if tcpReachable(req.Host, 5555, 2*time.Second) {
+-		writeJSON(w, wirelessResp{OK: true, Already: true, Host: req.Host, Port: 5555, Message: "5555 本来就通，无需修复"})
+-		return
+-	}
+-
+-	steps := []adbStep{}
+-	devices, _, _ := discoverWireless()
+-	port := 0
+-	for _, d := range devices {
+-		if d.Host == req.Host && d.ConnectPort != 0 {
+-			port = d.ConnectPort
+-			break
+-		}
+-	}
+-	if port == 0 {
+-		writeJSON(w, wirelessResp{OK: false, Message: "没查到无线调试广播", Need: "manual-port", Steps: steps,
+-			Hint: "盒子重启后「无线调试」会自动关掉：用遥控器重新打开（不用再输配对码），再点一次修复"})
+-		return
+-	}
+-
+-	serial := net.JoinHostPort(req.Host, strconv.Itoa(port))
+-	connOut, _ := runAdb(25*time.Second, "connect", serial)
+-	connected := strings.Contains(strings.ToLower(connOut), "connected to") || strings.Contains(strings.ToLower(connOut), "already connected")
+-	steps = append(steps, adbStep{Name: "连接 " + serial, OK: connected, Output: connOut})
+-	if !connected {
+-		writeJSON(w, wirelessResp{OK: false, Message: "连不上无线调试端口", Need: "pair", Steps: steps,
+-			Hint: "这台设备可能需要重新配对一次（电视上重新点「使用配对码配对设备」）"})
+-		return
+-	}
+-
+-	pinOut, _ := runAdb(20*time.Second, "-s", serial, "tcpip", "5555")
+-	pinned := strings.Contains(strings.ToLower(pinOut), "restarting in tcp mode")
+-	steps = append(steps, adbStep{Name: "固定端口 tcpip 5555", OK: pinned, Output: pinOut})
+-
+-	reachable := false
+-	for i := 0; i < 6 && !reachable; i++ {
+-		time.Sleep(500 * time.Millisecond)
+-		reachable = tcpReachable(req.Host, 5555, time.Second)
+-	}
+-	steps = append(steps, adbStep{Name: "检查 5555", OK: reachable,
+-		Output: map[bool]string{true: "5555 已可连接", false: "5555 暂不可连接"}[reachable]})
+-
+-	writeJSON(w, wirelessResp{OK: reachable, Host: req.Host, Port: 5555, Steps: steps,
+-		Message: map[bool]string{true: "已重新固定到 5555", false: "修复失败"}[reachable],
+-		Hint:    map[bool]string{true: "", false: "确认盒子在线、无线调试已打开；仍失败就重新配对一次"}[reachable]})
+-}
+-
+-func adbShutdown() {
+-	adbMu.Lock()
+-	defer adbMu.Unlock()
+-	_, _ = runAdb(3*time.Second, "kill-server")
+-}

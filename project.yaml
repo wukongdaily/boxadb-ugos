@@ -1,7 +1,7 @@
 # boxadb UGOS 原生应用（真实版，路线 A：inner + 系统反代 + WS）
 spec_version: 2.1
 app_id: com.wukongdaily.boxadb
-version: 0.4.6
+version: 0.5.5
 
 support_arch:
   - amd64
@@ -35,23 +35,38 @@ permissions:
 
 only_admin: true
 support_migration: false
-allow_add_access_path: false
+allow_add_access_path: true
 
 license_agreement_link:
-  - https://github.com/wukongdaily/boxadb/blob/main/LICENSE
+  - https://github.com/wukongdaily/boxadb-ugos/blob/main/LICENSE
 source_code_link:
-  - https://github.com/wukongdaily/boxadb
+  - https://github.com/wukongdaily/boxadb-ugos
+
+# 路径型配置项：让用户指定存放安装包的文件夹（向导里选一次即可，
+# 值通过环境变量 BOXADB_PKG_DIR 传给应用；后续可在「配置」里修改）
+parameters:
+  - key: BOXADB_PKG_DIR
+    type: path
+    required: false
+    changeable: true
+    i18n:
+      en-US:
+        name: Installation package folder
+        description: A NAS folder that stores .apk / .xapk / .apkm files, used by "Pick from NAS"
+      zh-CN:
+        name: 安装包目录
+        description: 存放 apk / xapk / apkm 的文件夹，供「从 NAS 选择安装包」使用
 
 i18n:
   en-US:
     name: BoxADB
     description: Debug Android TV boxes from the browser via the UGREEN NAS (ADB over WiFi)
     author: Wukong Daily
-    official: https://github.com/wukongdaily/boxadb
-    help: https://github.com/wukongdaily/boxadb/discussions
+    official: https://github.com/wukongdaily/boxadb-ugos
+    help: https://github.com/wukongdaily/boxadb-ugos/discussions
   zh-CN:
     name: 盒子助手
     description: 在浏览器里远程调试 Android 盒子（ADB over WiFi），绿联 NAS 原生版
     author: 悟空的日常
-    official: https://github.com/wukongdaily/boxadb
-    help: https://github.com/wukongdaily/boxadb/discussions
+    official: https://github.com/wukongdaily/boxadb-ugos
+    help: https://github.com/wukongdaily/boxadb-ugos/discussions
