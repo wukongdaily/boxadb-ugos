@@ -1,5 +1,5 @@
 diff --git a/bridge.go b/bridge.go
-index 2a11a21..cde8570 100644
+index 34ab0cd..fcb2b3e 100644
 --- a/bridge.go
 +++ b/bridge.go
 @@ -32,23 +32,42 @@ import (
@@ -57,10 +57,10 @@ index 2a11a21..cde8570 100644
  	return "8765"
  }
  
-@@ -271,8 +293,17 @@ var sidecar *pairSidecar
- 
- func router(w http.ResponseWriter, r *http.Request) {
- 	allowCross(w)
+@@ -277,8 +299,17 @@ func router(w http.ResponseWriter, r *http.Request) {
+ 		w.WriteHeader(http.StatusNoContent)
+ 		return
+ 	}
 -	// 配对三接口由 sidecar 提供：容器形态镜像自带 Node，桌面发版形态用随包 Node（见 runtime.go）；
 -	// 都没有时直接落到后面的 404，前端靠探测隐藏配对入口
 +	// 子路径部署（如 UGOS 反代 /boxadb → 桥）兼容：网关转发时可能保留前缀，
@@ -77,7 +77,7 @@ index 2a11a21..cde8570 100644
  	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
  		sidecar.handle(w, r)
  		return
-@@ -292,6 +323,14 @@ func router(w http.ResponseWriter, r *http.Request) {
+@@ -296,6 +327,14 @@ func router(w http.ResponseWriter, r *http.Request) {
  		w.Write([]byte("boxadb bridge ok\n"))
  	case r.URL.Path == "/adb":
  		handleTunnel(w, r)
@@ -92,7 +92,7 @@ index 2a11a21..cde8570 100644
  	default:
  		if static := staticHandler(); static != nil {
  			static.ServeHTTP(w, r) // 自托管形态：网页由本进程发出
-@@ -360,6 +399,41 @@ func main() {
+@@ -364,6 +403,41 @@ func main() {
  		os.Exit(healthCheck())
  	}
  	addr := net.JoinHostPort(listenHost(), listenPort())
@@ -225,10 +225,27 @@ index 4e3b4bf..0faa83a 100644
    <pre id="diag" hidden></pre>
  
 diff --git a/js/app.js b/js/app.js
-index 0f5f27b..923c1b6 100644
+index 2c723b6..dafc4c2 100644
 --- a/js/app.js
 +++ b/js/app.js
-@@ -378,6 +378,7 @@ function addFiles(files){ const ul=$('#install-queue');
+@@ -217,7 +217,7 @@ async function showPortDialog(ip, reason){
+         ? '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口。把<b>第二屏</b>的配对端口和 6 位配对码填到 ②，我配完对会<b>自动固定成 5555</b>；以后重启也只要开着无线调试就行。'
+         : '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口，明文进不去。<b>当前这个版本（连的是本机/容器里的桥）还不能配对</b>：请先用电脑执行一次 <code>adb tcpip 5555</code> 把盒子端口固定下来，之后回到这里只填 IP 就能连。');
+   if(hint) hint.textContent = ip;
+-  if(inp) inp.value = '';
++  if(inp) inp.value = (state.prefs.ports && state.prefs.ports[ip]) || '';
+   if(pinp) pinp.value = '';
+   if(cinp) cinp.value = '';
+   if(ok) ok.textContent = canPair ? '连接并固定端口' : '连接并固定端口';
+@@ -265,6 +265,7 @@ async function showPortDialog(ip, reason){
+       // 首次用本页面的钥匙连 5555，设备会弹「允许 USB 调试」：这不是失败，等用户点即可（给足 90 秒）
+       await T.connect({ ip, authTimeoutMs: 90000, onStall: (why) => handleStall(why, { stall, m }) });
+       state.device=await T.fetchDevice(ip); state.connected=true;
++      if (!wantPair) state.prefs.ports = Object.assign({}, state.prefs.ports, { [ip]: port });
+       savePrefs();
+       m.hidden=true;
+       toast('已固定为 5555。第一次连本页面时电视会弹「允许 USB 调试」，点允许即可', '', 9000);
+@@ -385,6 +386,7 @@ function addFiles(files){ const ul=$('#install-queue');
      li.querySelector('.q-x').onclick=()=>{ li.remove(); updateSummary(); };
      li.querySelector('.q-install').onclick=()=>installOne(li);
    }
@@ -236,7 +253,7 @@ index 0f5f27b..923c1b6 100644
    updateSummary();
  }
  function updateSummary(){ const items=$$('#install-queue .q-item'); const n=items.length; const bytes=items.reduce((s,li)=>s+((li._file&&li._file.size)||0),0);
-@@ -410,9 +411,168 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
+@@ -417,9 +419,168 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
    dz.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
    $('#install-all').addEventListener('click',installAll);
    $('#clear-queue').addEventListener('click',clearQueue);
@@ -405,7 +422,7 @@ index 0f5f27b..923c1b6 100644
  // ── 应用管理 ───────────────────────────────────────────
  async function refreshApps(){ const body=$('#apps-body');
    if(!state.connected){ body.innerHTML='<div class="empty">未连接设备 — 连接后将在此显示应用列表。</div>'; return; }
-@@ -532,9 +692,17 @@ function showInsecureDialog(){
+@@ -539,9 +700,17 @@ function showInsecureDialog(){
    //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
    const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
    const ownTls=/^\d{2,5}$/.test(tlsPort);
