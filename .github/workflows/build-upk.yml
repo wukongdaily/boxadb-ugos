@@ -1,0 +1,93 @@
+name: build-upk
+
+# 盒子助手 UGOS 原生应用 · CI 打包（官方要求正式包在 Linux 上执行 ugcli pack）
+# 触发：
+#   1. push 带 upk- 前缀的 tag（如 upk-0.6.1）→ 打包并发布 Release
+#   2. 手动 workflow_dispatch → 可指定构建号、选择是否发布 Release
+#       构建号默认用 run_number 递增；同一 x.y.z 下按官方规则须递增不重复。
+
+on:
+  push:
+    tags:
+      - 'upk-*'
+  workflow_dispatch:
+    inputs:
+      build:
+        description: '构建号（留空 = 自动用 run_number，保证递增）'
+        required: false
+      publish:
+        description: '打包完成后发布 GitHub Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  UGCLI_VERSION: 1.1.0.25
+  # ugcli 从本项目固定 Release 取（原始下载地址：绿联开发者平台 ugcli-linux-amd64），
+  # 避免每次 CI 都去打官网；版本升级时替换 Release 资产并同步更新这里的 sha256
+  UGCLI_SHA256: 9d8500a49a739bd2c9bf612018c4c3457e4ffc3f4a20d0f2365a4a91637d4516
+
+jobs:
+  pack:
+    name: ugcli check + pack (linux-amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      # ugcli 不在 ubuntu 镜像里，取官方 linux-amd64 静态二进制（免登录），
+      # sha256 与钉死值不符立即终止，绝不打包来源不明的工具
+      - name: Install ugcli
+        run: |
+          curl -fL --retry 3 -o /tmp/ugcli \
+            "https://github.com/wukongdaily/boxadb-ugos/releases/download/ugcli-v${{ env.UGCLI_VERSION }}/ugcli-v${{ env.UGCLI_VERSION }}-linux-amd64"
+          echo "${{ env.UGCLI_SHA256 }}  /tmp/ugcli" | sha256sum -c -
+          chmod +x /tmp/ugcli
+          sudo mv /tmp/ugcli /usr/local/bin/ugcli
+          ugcli --version
+
+      # Node 运行时（~121MB）按 build.sh 钉死的版本下载校验；key 不变就直接复用缓存
+      - name: Cache bundled Node runtime
+        uses: actions/cache@v4
+        with:
+          path: |
+            .work
+            rootfs_amd64/bin/node
+          key: ugos-node-v24.22.3-linux-x64
+
+      # build.sh：拉主仓 → 幂等打 ugos.patch → 下 Node（校验 sha256）→ 交叉编译 → ugcli check + pack
+      - name: Build UPK
+        env:
+          BUILD: ${{ inputs.build || github.run_number }}
+        run: |
+          bash scripts/build.sh "$BUILD"
+          ls -lh build_dir/pkgs/upk/
+
+      # 产物回读：确认 upk 真的生成了、且名字带上正确的版本号
+      - name: Verify artifact
+        run: |
+          set -e
+          UPKS=$(find build_dir/pkgs/upk -name '*.upk' | wc -l)
+          [ "$UPKS" -ge 1 ] || { echo "没有生成 .upk" >&2; exit 1; }
+          find build_dir/pkgs/upk -name '*.upk' -exec sh -c 'echo "$(du -h "$1" | cut -f1)  $1"' _ {} \;
+
+      - name: Release
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('upk-ci-{0}', github.run_number) }}
+          name: ${{ github.event_name == 'push' && github.ref_name || format('UPK CI build {0}', github.run_number) }}
+          body: |
+            由 CI 从源码构建的 UPK 安装包（Linux 环境执行 ugcli pack，权限位完整）。
+            版本与构建号见文件名 `amd64_nasync_<应用ID>_<版本>.upk`。
+            安装说明以仓库 README 为准。
+          files: build_dir/pkgs/upk/*.upk
+          draft: false
+          prerelease: false
