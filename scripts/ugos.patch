@@ -1,33 +1,27 @@
 diff --git a/bridge.go b/bridge.go
-index 8628170..cde8570 100644
+index 2a11a21..cde8570 100644
 --- a/bridge.go
 +++ b/bridge.go
-@@ -22,6 +22,7 @@ import (
- 	"net/http"
- 	"os"
- 	"os/signal"
-+	"path/filepath"
- 	"strconv"
- 	"strings"
- 	"sync/atomic"
-@@ -31,11 +32,42 @@ import (
+@@ -32,23 +32,42 @@ import (
  
  // ── 配置 ──
  
+-// 应用数据目录：容器可用 BRIDGE_STATE_DIR 指定卷；桌面形态落用户缓存目录，
+-// 随包 Node 的释放位置和配对密钥都放这里（跨升级保留）。
 +// 应用数据目录：UGOS 注入 UGAPP_DATA_DIR；其他形态可用 BRIDGE_STATE_DIR 覆盖
-+func dataDir() string {
-+	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
-+		return d
-+	}
+ func dataDir() string {
+ 	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
+ 		return d
+ 	}
 +	if d := os.Getenv("UGAPP_DATA_DIR"); d != "" {
 +		return d
 +	}
-+	if d, err := os.UserCacheDir(); err == nil {
-+		return filepath.Join(d, "boxadb")
-+	}
-+	return os.TempDir()
-+}
-+
+ 	if d, err := os.UserCacheDir(); err == nil {
+ 		return filepath.Join(d, "boxadb")
+ 	}
+ 	return os.TempDir()
+ }
+ 
 +// UGOS 原生应用形态：系统会给应用进程注入 UGAPP_* 环境变量。
 +// 检测到即启用 UGOS 默认值，start_cmd 可直接执行本二进制，无需 shell 包装脚本。
 +func ugosMode() bool { return os.Getenv("UGAPP_INSTALL_DIR") != "" }
@@ -53,7 +47,7 @@ index 8628170..cde8570 100644
  	return "127.0.0.1"
  }
  
-@@ -48,6 +80,9 @@ func listenPort() string {
+@@ -61,6 +80,9 @@ func listenPort() string {
  	if p := os.Getenv("BRIDGE_PORT"); p != "" {
  		return p
  	}
@@ -63,19 +57,12 @@ index 8628170..cde8570 100644
  	return "8765"
  }
  
-@@ -248,7 +283,7 @@ func handleTunnel(w http.ResponseWriter, r *http.Request) {
- 
- func allowCross(w http.ResponseWriter) {
- 	w.Header().Set("Access-Control-Allow-Origin", "*")
--	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
- 	w.Header().Set("Access-Control-Allow-Headers", "*")
- 	// GitHub Pages(https) 调 ws://127.0.0.1 的 PNA 预检
- 	w.Header().Set("Access-Control-Allow-Private-Network", "true")
-@@ -258,6 +293,16 @@ var sidecar *pairSidecar
+@@ -271,8 +293,17 @@ var sidecar *pairSidecar
  
  func router(w http.ResponseWriter, r *http.Request) {
  	allowCross(w)
+-	// 配对三接口由 sidecar 提供：容器形态镜像自带 Node，桌面发版形态用随包 Node（见 runtime.go）；
+-	// 都没有时直接落到后面的 404，前端靠探测隐藏配对入口
 +	// 子路径部署（如 UGOS 反代 /boxadb → 桥）兼容：网关转发时可能保留前缀，
 +	// 也可能已剥掉。配置了前缀且路径确实带前缀时剥掉；已被网关剥过的原样放行。
 +	if base := strings.Trim(ugosBasePath(), "/"); base != "" {
@@ -86,10 +73,11 @@ index 8628170..cde8570 100644
 +			r.URL.Path = strings.TrimPrefix(p, "/"+base)
 +		}
 +	}
- 	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
++	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
  	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
  		sidecar.handle(w, r)
-@@ -278,6 +323,14 @@ func router(w http.ResponseWriter, r *http.Request) {
+ 		return
+@@ -292,6 +323,14 @@ func router(w http.ResponseWriter, r *http.Request) {
  		w.Write([]byte("boxadb bridge ok\n"))
  	case r.URL.Path == "/adb":
  		handleTunnel(w, r)
@@ -104,7 +92,7 @@ index 8628170..cde8570 100644
  	default:
  		if static := staticHandler(); static != nil {
  			static.ServeHTTP(w, r) // 自托管形态：网页由本进程发出
-@@ -346,6 +399,41 @@ func main() {
+@@ -360,6 +399,41 @@ func main() {
  		os.Exit(healthCheck())
  	}
  	addr := net.JoinHostPort(listenHost(), listenPort())
@@ -237,18 +225,10 @@ index 4e3b4bf..0faa83a 100644
    <pre id="diag" hidden></pre>
  
 diff --git a/js/app.js b/js/app.js
-index 21c3163..923c1b6 100644
+index 0f5f27b..923c1b6 100644
 --- a/js/app.js
 +++ b/js/app.js
-@@ -217,7 +217,6 @@ async function showPortDialog(ip, reason){
-         : '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口，明文进不去。<b>当前这个版本（连的是本机/容器里的桥）还不能配对</b>：请先用电脑执行一次 <code>adb tcpip 5555</code> 把盒子端口固定下来，之后回到这里只填 IP 就能连。');
-   if(hint) hint.textContent = ip;
-   if(inp) inp.value = (state.prefs.ports && state.prefs.ports[ip]) || '';
--  if (disc && disc.lastPort && inp && !inp.value) inp.value = String(disc.lastPort);
-   if(pinp) pinp.value = '';
-   if(cinp) cinp.value = '';
-   if(ok) ok.textContent = canPair ? '连接并固定端口' : '连接并固定端口';
-@@ -379,6 +378,7 @@ function addFiles(files){ const ul=$('#install-queue');
+@@ -378,6 +378,7 @@ function addFiles(files){ const ul=$('#install-queue');
      li.querySelector('.q-x').onclick=()=>{ li.remove(); updateSummary(); };
      li.querySelector('.q-install').onclick=()=>installOne(li);
    }
@@ -256,7 +236,7 @@ index 21c3163..923c1b6 100644
    updateSummary();
  }
  function updateSummary(){ const items=$$('#install-queue .q-item'); const n=items.length; const bytes=items.reduce((s,li)=>s+((li._file&&li._file.size)||0),0);
-@@ -411,9 +411,168 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
+@@ -410,9 +411,168 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
    dz.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
    $('#install-all').addEventListener('click',installAll);
    $('#clear-queue').addEventListener('click',clearQueue);
@@ -425,7 +405,7 @@ index 21c3163..923c1b6 100644
  // ── 应用管理 ───────────────────────────────────────────
  async function refreshApps(){ const body=$('#apps-body');
    if(!state.connected){ body.innerHTML='<div class="empty">未连接设备 — 连接后将在此显示应用列表。</div>'; return; }
-@@ -533,9 +692,17 @@ function showInsecureDialog(){
+@@ -532,9 +692,17 @@ function showInsecureDialog(){
    //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
    const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
    const ownTls=/^\d{2,5}$/.test(tlsPort);
@@ -825,148 +805,6 @@ index 0000000..cca9e76
 +	}
 +	return true
 +}
-diff --git a/pair/api.js b/pair/api.js
-index f9c5e6b..df3d733 100644
---- a/pair/api.js
-+++ b/pair/api.js
-@@ -52,7 +52,7 @@ async function pairFlow({ host, pairPort, code, connPort, pinPort = 5555, log =
-   }
-   let port = Number(connPort) || 0;
-   if (!port) {
--    const found = await mdns.connect(2000);
-+    const found = await mdns.connect(2000, host);
-     const hit = found.find((f) => f.instance === p.identity) || found[0];
-     if (hit) port = hit.port;
-   }
-@@ -86,7 +86,7 @@ async function discoverFlow({ host } = {}) {
-   const known = keystore.hintFor(host);
-   const lastPort = known && known.port ? Number(known.port) : null;
-   if (!discoverable) return { status: 200, body: { discoverable: false, lastPort, pairing: [], connect: [] } };
--  const [pairing, connect] = await Promise.all([mdns.pairing(1800), mdns.connect(1800)]);
-+  const [pairing, connect] = await Promise.all([mdns.pairing(1800, host), mdns.connect(1800, host)]);
-   const seen = new Set(keystore.list().map((x) => x.instance));
-   return { status: 200, body: { discoverable: true, lastPort, pairing, connect: connect.map((c) => ({ ...c, paired: seen.has(c.instance) })) } };
- }
-diff --git a/pair/daemon.js b/pair/daemon.js
-index 65b2cca..da637fe 100644
---- a/pair/daemon.js
-+++ b/pair/daemon.js
-@@ -10,7 +10,11 @@ const HOST = process.env.BOXADB_PAIR_HOST || '127.0.0.1';
- const PIN = Number(process.env.BOXADB_PIN_PORT || 5555);
- keystore.init(process.env.BOXADB_STATE_DIR || path.join(process.env.DATA_DIR || '/data', 'pair'));
- 
--const say = (...a) => console.log(new Date().toISOString(), '[pair]', ...a);
-+const say = (...a) => {
-+  const line = [new Date().toISOString(), '[pair]', ...a].join(' ');
-+  console.log(line);
-+  if (process.env.BOXADB_LOG_FILE) { try { require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE, line + '\n'); } catch {} }
-+};
- 
- // 桥被强杀时来不及回收子进程，这里靠 stdin 管道：父进程一没，读端就 EOF，sidecar 自己退出
- process.stdin.resume();
-diff --git a/pair/index.js b/pair/index.js
-index 208dc30..0e1c88e 100644
---- a/pair/index.js
-+++ b/pair/index.js
-@@ -124,12 +124,20 @@ async function pin({ host, port, identity, psk, pinPort = 5555, timeout = 8000 }
- // 自愈：现查 mDNS（端口每次开机都变）→ 用已存 psk 开门钉端口
- async function recover({ host, pinPort = 5555, timeout = 8000, mdnsMs = 2000 } = {}) {
-   if (host && await probe(host, pinPort, 1200)) return { ok: true, already: true, pinPort };   // 端口已通，无需任何自愈
--  const found = await mdns.connect(mdnsMs);
-+  const found = await mdns.connect(mdnsMs, host);
-   const known = ks.list();
-   // 只认「配过对且属于这台 IP」的实例；无归属信息的旧记录仅在当地只有一条凭据时才敢套用
-   const sole = known.length === 1 && found.length === 1;
--  const hit = found.find((f) => known.some((k) => k.instance === f.instance &&
-+  let hit = found.find((f) => known.some((k) => k.instance === f.instance &&
-     (!host || !k.peerHost ? (k.peerHost ? k.peerHost === host : sole) : k.peerHost === host)));
-+  // 盒子重启后 mDNS 实例名的随机后缀可能变（adb-<serial>-xxxx 会换），严格匹配会误判成「没配过对」。
-+  // 家里只有一台设备、只有一条凭据时，按“唯一候选”直接认它。
-+  if (!hit && known.length === 1 && found.length === 1) hit = found[0];
-+  const line = '[recover] found=' + (found.map((f) => f.instance + ':' + f.port).join(',') || '-') +
-+    ' known=' + (known.map((k) => k.instance + '@' + (k.peerHost || '-')).join(',') || '-') +
-+    ' hit=' + (hit ? hit.instance : '-');
-+  console.log(line);
-+  if (process.env.BOXADB_LOG_FILE) { try { require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE, new Date().toISOString() + ' ' + line + '\n'); } catch {} }
-   if (!hit) return { ok: false, need: found.length ? 'pair' : 'manual-port', discovered: found,
-     reason: found.length ? '发现的实例没有已存凭据' : '未发现无线调试广播（可能是自动发现不可用，也可能开关确实没开）' };
-   const rec = ks.lookup(hit.instance);
-diff --git a/pair/mdns.js b/pair/mdns.js
-index dba466c..b27d199 100644
---- a/pair/mdns.js
-+++ b/pair/mdns.js
-@@ -60,13 +60,20 @@ function parse(buf) {
-   }
-   return out;
- }
--const SKIP_IF = /^(docker|br-|veth|virbr|br|lo|tun|tap|cni|flannel|kube)/;
--function lanIPv4() {
--  // 只认物理/业务网口：NAS 上 docker0 与一堆 br-* 桥接口会把组播发错网段
-+// 只跳过虚拟/隧道网卡；**不能跳过 br* 与 bond***：绿联等 NAS 开了虚拟机后，
-+// 业务地址常常挂在 br0 / br-lan 这类桥接口上，跳过它 ＝ 一个网卡都不剩，组播永远发不出去。
-+const SKIP_IF = /^(docker|veth|virbr|tun|tap|cni|flannel|kube|lo)/;
-+function lanIPv4(host) {
-+  const want = host ? String(host).split('.').slice(0, 3).join('.') : null;
-   const out = [];
-   for (const [dev, addrs] of Object.entries(os.networkInterfaces())) {
-     if (SKIP_IF.test(dev)) continue;
--    for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) out.push({ dev, address: a.address });
-+    for (const a of addrs || []) {
-+      if (a.family !== 'IPv4' || a.internal || a.address.startsWith('127.')) continue;
-+      // 有目标时只发往和目标同 /24 的网卡，避免组播被送到 docker/其它网段
-+      if (want && a.address.split('.').slice(0, 3).join('.') !== want) continue;
-+      out.push({ dev, address: a.address });
-+    }
-   }
-   return out.slice(0, 4);
- }
-@@ -97,10 +104,17 @@ function buildQuery(names, qu) {
- }
- // 每个候选网口各开一对 socket（临时端口 / 5353），并分别发带与不带 QU 位的查询后合并：
- // macOS 上应答回到临时端口，Linux 多网卡上只有走对网口 + 5353 才收得到 SRV
--async function ask(names, ms) {
-+async function ask(names, ms, host) {
-   const found = [];
-   const socks = [];
--  for (const it of lanIPv4()) {
-+  const ifaces = lanIPv4(host);
-+  if (host && process.env.BOXADB_LOG_FILE) {
-+    try {
-+      require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE,
-+        new Date().toISOString() + ' [mdns] host=' + host + ' ifaces=' + (ifaces.map((i) => i.dev + '/' + i.address).join(',') || '-') + '\n');
-+    } catch {}
-+  }
-+  for (const it of ifaces) {
-     for (const port of [0, 5353]) {
-       const sk = await openSocket(port, it.address);
-       if (!sk) continue;
-@@ -116,11 +130,11 @@ async function ask(names, ms) {
-   for (const sk of socks) { try { sk.close(); } catch {} }
-   return found;
- }
--async function browse(service, ms = 1500) {
-+async function browse(service, ms = 1500, host) {
-   const seen = new Map();
--  let recs = await ask([service], ms);
-+  let recs = await ask([service], ms, host);
-   const ptrs = [...new Set(recs.filter((r) => r.type === 'PTR' && r.name).map((r) => r.name))];
--  if (ptrs.length) recs = recs.concat(await ask(ptrs, ms));
-+  if (ptrs.length) recs = recs.concat(await ask(ptrs, ms, host));
-   for (const r of recs) {
-     if (r.type !== 'SRV') continue;
-     const inst = r.name.split('.')[0];
-@@ -128,8 +142,9 @@ async function browse(service, ms = 1500) {
-   }
-   return [...seen.values()];
- }
--const pairing = ms => browse(PAIRING, ms);
--const connect = ms => browse(CONNECT, ms);
-+// 兼容旧签名：(ms) 或 (ms, host)
-+const pairing = (ms, host) => browse(PAIRING, ms, host);
-+const connect = (ms, host) => browse(CONNECT, ms, host);
- // 能否在本机发现 mDNS 广播：判据是「有没有和目标同一 /24 的网口」。
- // NAT 容器里只有容器内网段（如 172.17/192.168.215），组播到不了局域网；NAS 版跑在主机上则同段可用。
- function discoverable(host) {
 diff --git a/pkgstore.go b/pkgstore.go
 new file mode 100644
 index 0000000..84d7e34
@@ -1253,406 +1091,45 @@ index 0000000..84d7e34
 +	}
 +	return true
 +}
-diff --git a/wireless.go b/wireless.go
-deleted file mode 100644
-index bbccb2e..0000000
---- a/wireless.go
-+++ /dev/null
-@@ -1,397 +0,0 @@
--package main
--
--// 无线调试（Android 11+ 配对）支持：桥不自己实现 SPAKE2/TLS-PSK，
--// 而是调用随包内置的官方 adb 完成「配对 → 连上无线调试端口 → tcpip 5555 固定端口」。
--// 之后浏览器端的 Tango 照常连 5555（首次会弹一次「允许 USB 调试」）。
--//
--// 端点（均在反代前缀下，仅自托管形态可用）：
--//   GET  /wireless/discover  列出 mDNS 发现的无线调试设备（配对端口 / 连接端口）
--//   POST /wireless/pair      {host,pairPort,code,connPort?} 配对并固定 5555
--//   POST /wireless/ensure    {host} 盒子重启后端口变了，用已配对凭据重新固定 5555
--
--import (
--	"context"
--	"encoding/json"
--	"net"
--	"net/http"
+diff --git a/webapp_on.go b/webapp_on.go
+index 3555ce6..c3823cf 100644
+--- a/webapp_on.go
++++ b/webapp_on.go
+@@ -8,7 +8,6 @@ import (
+ 	"io/fs"
+ 	"log"
+ 	"net/http"
 -	"os"
--	"os/exec"
--	"path/filepath"
--	"regexp"
--	"strconv"
--	"strings"
--	"sync"
--	"time"
--)
--
--var adbMu sync.Mutex // adb 是单例服务，所有调用串行
--
--// adb 自己的 server 端口与桌面上的 adb 隔离，避免互相干扰
--const adbServerPort = "5038"
--
--// ── 路径与环境 ─────────────────────────────────────────
--
--func dataDir() string {
--	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
--		return d
--	}
--	if d := os.Getenv("UGAPP_DATA_DIR"); d != "" {
--		return d
--	}
--	if d, err := os.UserCacheDir(); err == nil {
--		return filepath.Join(d, "boxadb")
--	}
--	return os.TempDir()
--}
--
--// adb 与桥同目录（UPK: rootfs_amd64/bin/adb），可用 BRIDGE_ADB 覆盖
--func adbBin() string {
--	if p := os.Getenv("BRIDGE_ADB"); p != "" {
--		return p
--	}
--	if exe, err := os.Executable(); err == nil {
--		p := filepath.Join(filepath.Dir(exe), "adb")
--		if st, err := os.Stat(p); err == nil && !st.IsDir() {
--			return p
--		}
--	}
--	return "adb"
--}
--
--// 独立的 HOME：adb 密钥（adbkey）落在应用数据目录，不碰系统任何位置
--func adbHome() (string, error) {
--	home := filepath.Join(dataDir(), "adbhome")
--	if err := os.MkdirAll(filepath.Join(home, ".android"), 0o700); err != nil {
--		return "", err
--	}
--	return home, nil
--}
--
--func runAdb(timeout time.Duration, args ...string) (string, error) {
--	home, err := adbHome()
--	if err != nil {
--		return "", err
--	}
--	ctx, cancel := context.WithTimeout(context.Background(), timeout)
--	defer cancel()
--	cmd := exec.CommandContext(ctx, adbBin(), args...)
--	cmd.Env = append(os.Environ(),
--		"HOME="+home,
--		"ANDROID_USER_HOME="+filepath.Join(home, ".android"),
--		"ANDROID_ADB_SERVER_PORT="+adbServerPort,
--	)
--	out, err := cmd.CombinedOutput()
--	text := strings.TrimSpace(string(out))
--	if len(text) > 2048 {
--		text = text[len(text)-2048:]
--	}
--	if err != nil && text == "" {
--		text = err.Error()
--	}
--	return text, err
--}
--
--// ── mDNS 发现 ──────────────────────────────────────────
--
--type wirelessDevice struct {
--	Instance    string `json:"instance"`
--	Host        string `json:"host"`
--	PairPort    int    `json:"pairPort,omitempty"`
--	ConnectPort int    `json:"connectPort,omitempty"`
--}
--
--// adb mdns services 输出示例：
--//
--//	List of discovered mdns services
--//	adb-44071FDH2003CX	_adb-tls-pairing._tcp.	192.168.66.172:37123
--//	adb-44071FDH2003CX	_adb-tls-connect._tcp.	192.168.66.172:38451
--func parseMdnsServices(out string) []wirelessDevice {
--	byKey := map[string]*wirelessDevice{}
--	order := []string{}
--	for _, line := range strings.Split(out, "\n") {
--		fields := strings.Fields(strings.TrimSpace(line))
--		if len(fields) < 3 {
--			continue
--		}
--		addr := fields[len(fields)-1]
--		host, portText, ok := strings.Cut(addr, ":")
--		if !ok {
--			continue
--		}
--		port, err := strconv.Atoi(portText)
--		if err != nil || !isIPv4(host) {
--			continue
--		}
--		service := strings.ToLower(strings.Join(fields[1:len(fields)-1], " "))
--		key := fields[0] + "|" + host
--		d, seen := byKey[key]
--		if !seen {
--			d = &wirelessDevice{Instance: fields[0], Host: host}
--			byKey[key] = d
--			order = append(order, key)
--		}
--		switch {
--		case strings.Contains(service, "_adb-tls-pairing"):
--			d.PairPort = port
--		case strings.Contains(service, "_adb-tls-connect"):
--			d.ConnectPort = port
--		}
--	}
--	list := make([]wirelessDevice, 0, len(order))
--	for _, k := range order {
--		list = append(list, *byKey[k])
--	}
--	return list
--}
--
--func discoverWireless() ([]wirelessDevice, string, bool) {
--	out, _ := runAdb(10*time.Second, "mdns", "services")
--	ok := strings.Contains(out, "List of discovered mdns services")
--	return parseMdnsServices(out), out, ok
--}
--
--// ── 连通性 ─────────────────────────────────────────────
--
--func tcpReachable(host string, port int, timeout time.Duration) bool {
--	c, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
--	if err != nil {
--		return false
--	}
--	c.Close()
--	return true
--}
--
--var pairedRe = regexp.MustCompile(`(?i)successfully paired to .*\[guid=([^\]]+)\]`)
--
--// ── HTTP 端点 ──────────────────────────────────────────
--
--type adbStep struct {
--	Name   string `json:"name"`
--	OK     bool   `json:"ok"`
--	Output string `json:"output"`
--}
--
--type wirelessResp struct {
--	OK       bool             `json:"ok"`
--	Message  string           `json:"message,omitempty"`
--	Hint     string           `json:"hint,omitempty"`
--	Need     string           `json:"need,omitempty"`
--	Host     string           `json:"host,omitempty"`
--	Port     int              `json:"port,omitempty"`
--	Instance string           `json:"instance,omitempty"`
--	Already  bool             `json:"already,omitempty"`
--	Devices  []wirelessDevice `json:"devices,omitempty"`
--	Steps    []adbStep        `json:"steps,omitempty"`
--}
--
--func writeJSON(w http.ResponseWriter, v any) {
--	w.Header().Set("Content-Type", "application/json; charset=utf-8")
--	_ = json.NewEncoder(w).Encode(v)
--}
--
--func handleWirelessDiscover(w http.ResponseWriter, r *http.Request) {
--	if r.Method != "GET" && r.Method != "POST" {
--		w.WriteHeader(405)
--		return
--	}
--	adbMu.Lock()
--	devices, raw, ok := discoverWireless()
--	adbMu.Unlock()
--	resp := wirelessResp{OK: true, Devices: devices}
--	if !ok {
--		// adb 缺失 / 起不来：把原始输出带回去，方便排查
--		resp.OK = false
--		resp.Message = "内置 adb 不可用"
--		resp.Hint = "打包时应把 adb 放在桥同目录（bin/adb）；也可用 BRIDGE_ADB 指定路径"
--		resp.Steps = []adbStep{{Name: "adb mdns services", OK: false, Output: raw}}
--	} else if len(devices) == 0 {
--		resp.Message = "没有发现正在广播的设备"
--		resp.Hint = "确认电视上「无线调试」已打开（盒子重启后会自动关掉），或直接手填配对端口和配对码"
--	}
--	writeJSON(w, resp)
--}
--
--type pairRequest struct {
--	Host     string `json:"host"`
--	PairPort int    `json:"pairPort"`
--	Code     string `json:"code"`
--	ConnPort int    `json:"connPort"`
--}
--
--func handleWirelessPair(w http.ResponseWriter, r *http.Request) {
--	if r.Method != "POST" {
--		w.WriteHeader(405)
--		return
--	}
--	var req pairRequest
--	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
--		writeJSON(w, wirelessResp{OK: false, Message: "请求格式不正确"})
--		return
--	}
--	req.Host = strings.TrimSpace(req.Host)
--	req.Code = strings.TrimSpace(req.Code)
--	if !isIPv4(req.Host) || !targetAllowed(req.Host) {
--		writeJSON(w, wirelessResp{OK: false, Message: "目标地址必须是局域网内的盒子 IPv4"})
--		return
--	}
--	if req.PairPort < 1 || req.PairPort > 65535 {
--		writeJSON(w, wirelessResp{OK: false, Message: "配对端口请填 1-65535 的数字"})
--		return
--	}
--	if !regexp.MustCompile(`^\d{6}$`).MatchString(req.Code) {
--		writeJSON(w, wirelessResp{OK: false, Message: "配对码是 6 位数字（电视配对窗口上那串）"})
--		return
--	}
--
--	adbMu.Lock()
--	defer adbMu.Unlock()
--
--	steps := []adbStep{}
--	pairAddr := net.JoinHostPort(req.Host, strconv.Itoa(req.PairPort))
--	pairOut, _ := runAdb(60*time.Second, "pair", pairAddr, req.Code)
--	paired := strings.Contains(strings.ToLower(pairOut), "successfully paired")
--	steps = append(steps, adbStep{Name: "配对 " + pairAddr, OK: paired, Output: pairOut})
--	if !paired {
--		hint := "配对中断，请确认配对窗口仍停留在电视上，配对码没过期"
--		if strings.Contains(strings.ToLower(pairOut), "refused") || strings.Contains(strings.ToLower(pairOut), "timed out") {
--			hint = "连不上配对端口，请确认配对窗口是打开状态、端口没填错"
--		}
--		writeJSON(w, wirelessResp{OK: false, Message: "配对失败", Hint: hint, Steps: steps})
--		return
--	}
--
--	instance := ""
--	if m := pairedRe.FindStringSubmatch(pairOut); len(m) == 2 {
--		instance = m[1]
--	}
--
--	// 连接端口：优先用户填的，否则按 guid 从 mDNS 里配对
--	connPort := req.ConnPort
--	if connPort == 0 {
--		devices, _, _ := discoverWireless()
--		for _, d := range devices {
--			if d.Host != req.Host || d.ConnectPort == 0 {
--				continue
--			}
--			if instance == "" || d.Instance == instance {
--				connPort = d.ConnectPort
--				break
--			}
--		}
--	}
--	if connPort == 0 {
--		writeJSON(w, wirelessResp{OK: false, Message: "已配对成功，但没查到连接端口", Need: "conn-port",
--			Hint: "把电视「无线调试」第一屏显示的那串 IP:端口里的端口填到「连接端口」再来一次", Steps: steps})
--		return
--	}
--
--	serial := net.JoinHostPort(req.Host, strconv.Itoa(connPort))
--	connOut, _ := runAdb(25*time.Second, "connect", serial)
--	connected := strings.Contains(strings.ToLower(connOut), "connected to") || strings.Contains(strings.ToLower(connOut), "already connected")
--	steps = append(steps, adbStep{Name: "连接 " + serial, OK: connected, Output: connOut})
--	if !connected {
--		writeJSON(w, wirelessResp{OK: false, Message: "配对成功，但连接无线调试端口失败", Steps: steps,
--			Hint: "请照电视「无线调试」第一屏核对端口号；配对码页面填的端口不是连接端口"})
--		return
--	}
--
--	pinOut, _ := runAdb(20*time.Second, "-s", serial, "tcpip", "5555")
--	pinned := strings.Contains(strings.ToLower(pinOut), "restarting in tcp mode") || strings.Contains(pinOut, "5555")
--	steps = append(steps, adbStep{Name: "固定端口 tcpip 5555", OK: pinned, Output: pinOut})
--
--	// adbd 重启需要一点时间，最多等 3 秒
--	reachable := false
--	for i := 0; i < 6 && !reachable; i++ {
--		time.Sleep(500 * time.Millisecond)
--		reachable = tcpReachable(req.Host, 5555, time.Second)
--	}
--	steps = append(steps, adbStep{Name: "检查 5555", OK: reachable,
--		Output: map[bool]string{true: "5555 已可连接", false: "5555 暂不可连接"}[reachable]})
--
--	resp := wirelessResp{OK: reachable, Host: req.Host, Port: 5555, Instance: instance, Steps: steps}
--	if reachable {
--		resp.Message = "配对成功，已固定到 5555"
--		resp.Hint = "回到上面点「连接」即可；第一次电视会弹「允许 USB 调试」，用遥控器点允许"
--	} else {
--		resp.Message = "配对成功，但 5555 还没起来"
--		resp.Hint = "等两秒再点一次「修复连接」，或者确认盒子上没有禁用 adb tcpip"
--	}
--	writeJSON(w, resp)
--}
--
--type ensureRequest struct {
--	Host string `json:"host"`
--}
--
--// 盒子重启后无线调试端口会变：用已配对的凭据重新连上并把端口固定回 5555
--func handleWirelessEnsure(w http.ResponseWriter, r *http.Request) {
--	if r.Method != "POST" {
--		w.WriteHeader(405)
--		return
--	}
--	var req ensureRequest
--	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
--		writeJSON(w, wirelessResp{OK: false, Message: "请求格式不正确"})
--		return
--	}
--	req.Host = strings.TrimSpace(req.Host)
--	if !isIPv4(req.Host) || !targetAllowed(req.Host) {
--		writeJSON(w, wirelessResp{OK: false, Message: "目标地址必须是局域网内的盒子 IPv4"})
--		return
--	}
--
--	adbMu.Lock()
--	defer adbMu.Unlock()
--
--	if tcpReachable(req.Host, 5555, 2*time.Second) {
--		writeJSON(w, wirelessResp{OK: true, Already: true, Host: req.Host, Port: 5555, Message: "5555 本来就通，无需修复"})
--		return
--	}
--
--	steps := []adbStep{}
--	devices, _, _ := discoverWireless()
--	port := 0
--	for _, d := range devices {
--		if d.Host == req.Host && d.ConnectPort != 0 {
--			port = d.ConnectPort
--			break
--		}
--	}
--	if port == 0 {
--		writeJSON(w, wirelessResp{OK: false, Message: "没查到无线调试广播", Need: "manual-port", Steps: steps,
--			Hint: "盒子重启后「无线调试」会自动关掉：用遥控器重新打开（不用再输配对码），再点一次修复"})
--		return
--	}
--
--	serial := net.JoinHostPort(req.Host, strconv.Itoa(port))
--	connOut, _ := runAdb(25*time.Second, "connect", serial)
--	connected := strings.Contains(strings.ToLower(connOut), "connected to") || strings.Contains(strings.ToLower(connOut), "already connected")
--	steps = append(steps, adbStep{Name: "连接 " + serial, OK: connected, Output: connOut})
--	if !connected {
--		writeJSON(w, wirelessResp{OK: false, Message: "连不上无线调试端口", Need: "pair", Steps: steps,
--			Hint: "这台设备可能需要重新配对一次（电视上重新点「使用配对码配对设备」）"})
--		return
--	}
--
--	pinOut, _ := runAdb(20*time.Second, "-s", serial, "tcpip", "5555")
--	pinned := strings.Contains(strings.ToLower(pinOut), "restarting in tcp mode")
--	steps = append(steps, adbStep{Name: "固定端口 tcpip 5555", OK: pinned, Output: pinOut})
--
--	reachable := false
--	for i := 0; i < 6 && !reachable; i++ {
--		time.Sleep(500 * time.Millisecond)
--		reachable = tcpReachable(req.Host, 5555, time.Second)
--	}
--	steps = append(steps, adbStep{Name: "检查 5555", OK: reachable,
--		Output: map[bool]string{true: "5555 已可连接", false: "5555 暂不可连接"}[reachable]})
--
--	writeJSON(w, wirelessResp{OK: reachable, Host: req.Host, Port: 5555, Steps: steps,
--		Message: map[bool]string{true: "已重新固定到 5555", false: "修复失败"}[reachable],
--		Hint:    map[bool]string{true: "", false: "确认盒子在线、无线调试已打开；仍失败就重新配对一次"}[reachable]})
--}
--
--func adbShutdown() {
--	adbMu.Lock()
--	defer adbMu.Unlock()
--	_, _ = runAdb(3*time.Second, "kill-server")
--}
+ 	"strings"
+ 	"time"
+ )
+@@ -23,10 +22,15 @@ var webappFS embed.FS
+ // 自托管标记：运行时注入 index.html，让前端把桥地址切到「同源 + 前缀」。
+ // 不改 JS 源码：仓库前端与镜像前端字节一致。子路径部署用 BRIDGE_BASE_PATH（如 /boxadb）。
+ func bridgeMeta() string {
+-	prefix := os.Getenv("BRIDGE_BASE_PATH")
++	prefix := ugosBasePath() // BRIDGE_BASE_PATH 优先；UGOS 形态默认 /boxadb
++	platform := ""
++	if ugosMode() {
++		platform = `<meta name="boxadb-platform" content="ugos">`
++	}
+ 	return `<meta name="boxadb-mode" content="selfhosted">` +
+ 		`<meta name="boxadb-prefix" content="` + prefix + `">` +
+-		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">`
++		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">` +
++		platform
+ }
+ 
+ func staticHandler() http.Handler {
+@@ -83,4 +87,10 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
+ func privateOnlyDefault() bool { return true }
+ 
+ // 自托管默认开内置 https（8766）：手机需要安全上下文；BRIDGE_HTTPS_PORT=0 可关。
+-func httpsDefault() string { return "8766" }
++// UGOS 形态默认关：https 由系统网关提供，桥只跑纯 http + WS。
++func httpsDefault() string {
++	if ugosMode() {
++		return "0"
++	}
++	return "8766"
++}
