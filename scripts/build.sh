@@ -38,7 +38,7 @@ download_node() {
   [ -x "${dst}" ] && return 0
   if [ ! -f "${tgz}" ]; then
     curl -fL --retry 3 -o "${tgz}" \
-      "https://nodejs.org/dist/latest-v24.x/node-${NODE_VER}-linux-${arch}.tar.xz"
+      "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${arch}.tar.xz"
   fi
   echo "${sha}  ${tgz}" | shasum -a 256 -c - || { echo "Node ${arch} 校验失败"; exit 1; }
   tar -xJf "${tgz}" -C "${WORK}"
