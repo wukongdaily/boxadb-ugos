@@ -419,10 +419,9 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
   $('#clear-queue').addEventListener('click',clearQueue);
   bindNas();
   if (SELF_HOSTED) {
-    // 有 shared 授权目录就显示入口；没授权也显示，点了会给引导文案
-    const b = $('#pick-nas');
-    if (b) nasApi('').then(() => { b.hidden = false; }).catch(() => { b.hidden = true; });
-    const sl = $('#save-lib-wrap'); if (sl) sl.hidden = false;
+    // 自托管形态（NAS/Docker）直接显示入口，不靠异步探针（inner 窗口里 import 慢一拍
+    // 会让按钮永远 hidden）；没授权点了会给引导文案，不影响体验
+    const b = $('#pick-nas'); if (b) b.hidden = false;
   }
   updateSummary();
 }
