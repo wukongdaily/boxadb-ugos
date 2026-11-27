@@ -33,12 +33,15 @@ NODE_SHA_ARM64="6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c
 
 download_node() {
   local arch="$1" sha="$2"
-  local tgz="${WORK}/node-${NODE_VER}-linux-${arch}.tar.xz"
+  # Go 叫 amd64，Node 叫 x64；arm64 两边一致
+  local node_arch="$arch"
+  [ "${arch}" = "amd64" ] && node_arch="x64"
+  local tgz="${WORK}/node-${NODE_VER}-linux-${node_arch}.tar.xz"
   local dst="${REPO_ROOT}/rootfs_${arch}/bin/node"
   [ -x "${dst}" ] && return 0
   if [ ! -f "${tgz}" ]; then
     curl -fL --retry 3 -o "${tgz}" \
-      "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${arch}.tar.xz"
+      "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${node_arch}.tar.xz"
   fi
   echo "${sha}  ${tgz}" | shasum -a 256 -c - || { echo "Node ${arch} 校验失败"; exit 1; }
   tar -xJf "${tgz}" -C "${WORK}"
