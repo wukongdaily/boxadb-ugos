@@ -46,7 +46,7 @@ download_node() {
   echo "${sha}  ${tgz}" | shasum -a 256 -c - || { echo "Node ${arch} 校验失败"; exit 1; }
   tar -xJf "${tgz}" -C "${WORK}"
   mkdir -p "${REPO_ROOT}/rootfs_${arch}/bin"
-  cp "${WORK}/node-${NODE_VER}-linux-${arch}/bin/node" "${dst}"
+  cp "${WORK}/node-${NODE_VER}-linux-${node_arch}/bin/node" "${dst}"
   chmod 0755 "${dst}"
   echo "node ${arch} installed"
 }
