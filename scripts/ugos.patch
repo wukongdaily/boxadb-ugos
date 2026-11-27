@@ -1,14 +1,13 @@
 diff --git a/bridge.go b/bridge.go
-index 34ab0cd..fcb2b3e 100644
+index 34ab0cd..45d2345 100644
 --- a/bridge.go
 +++ b/bridge.go
-@@ -32,23 +32,42 @@ import (
- 
+@@ -33,22 +33,43 @@ import (
  // ── 配置 ──
  
--// 应用数据目录：容器可用 BRIDGE_STATE_DIR 指定卷；桌面形态落用户缓存目录，
+ // 应用数据目录：容器可用 BRIDGE_STATE_DIR 指定卷；桌面形态落用户缓存目录，
 -// 随包 Node 的释放位置和配对密钥都放这里（跨升级保留）。
-+// 应用数据目录：UGOS 注入 UGAPP_DATA_DIR；其他形态可用 BRIDGE_STATE_DIR 覆盖
++// 随包 Node 的释放位置和配对密钥都放这里（跨升级保留）。UGOS 注入 UGAPP_DATA_DIR。
  func dataDir() string {
  	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
  		return d
@@ -36,6 +35,7 @@ index 34ab0cd..fcb2b3e 100644
 +	return ""
 +}
 +
++
  // 桌面形态默认只监听回环；Docker/NAS 形态用 BRIDGE_HOST=0.0.0.0 对外提供服务。
  func listenHost() string {
  	if h := os.Getenv("BRIDGE_HOST"); h != "" {
@@ -47,7 +47,7 @@ index 34ab0cd..fcb2b3e 100644
  	return "127.0.0.1"
  }
  
-@@ -61,6 +80,9 @@ func listenPort() string {
+@@ -61,6 +82,9 @@ func listenPort() string {
  	if p := os.Getenv("BRIDGE_PORT"); p != "" {
  		return p
  	}
@@ -57,12 +57,10 @@ index 34ab0cd..fcb2b3e 100644
  	return "8765"
  }
  
-@@ -277,8 +299,17 @@ func router(w http.ResponseWriter, r *http.Request) {
- 		w.WriteHeader(http.StatusNoContent)
- 		return
- 	}
--	// 配对三接口由 sidecar 提供：容器形态镜像自带 Node，桌面发版形态用随包 Node（见 runtime.go）；
--	// 都没有时直接落到后面的 404，前端靠探测隐藏配对入口
+@@ -271,6 +295,16 @@ var sidecar *pairSidecar
+ 
+ func router(w http.ResponseWriter, r *http.Request) {
+ 	allowCross(w)
 +	// 子路径部署（如 UGOS 反代 /boxadb → 桥）兼容：网关转发时可能保留前缀，
 +	// 也可能已剥掉。配置了前缀且路径确实带前缀时剥掉；已被网关剥过的原样放行。
 +	if base := strings.Trim(ugosBasePath(), "/"); base != "" {
@@ -73,18 +71,13 @@ index 34ab0cd..fcb2b3e 100644
 +			r.URL.Path = strings.TrimPrefix(p, "/"+base)
 +		}
 +	}
-+	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
- 	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
- 		sidecar.handle(w, r)
- 		return
-@@ -296,6 +327,14 @@ func router(w http.ResponseWriter, r *http.Request) {
+ 	// CORS/PNA 预检必须本地应答 204：转发给 sidecar 会得到 404，浏览器会拦掉
+ 	// Pages 过来的配对 POST（以及新版的 /discover 探测），桌面配对直接瘫痪
+ 	if r.Method == http.MethodOptions {
+@@ -296,6 +330,10 @@ func router(w http.ResponseWriter, r *http.Request) {
  		w.Write([]byte("boxadb bridge ok\n"))
  	case r.URL.Path == "/adb":
  		handleTunnel(w, r)
-+	case strings.HasPrefix(r.URL.Path, "/pkg/"):
-+		if handlePkg(w, r) {
-+			return
-+		}
 +	case strings.HasPrefix(r.URL.Path, "/nas/"):
 +		if handleNas(w, r) {
 +			return
@@ -92,7 +85,7 @@ index 34ab0cd..fcb2b3e 100644
  	default:
  		if static := staticHandler(); static != nil {
  			static.ServeHTTP(w, r) // 自托管形态：网页由本进程发出
-@@ -364,6 +403,41 @@ func main() {
+@@ -364,6 +402,41 @@ func main() {
  		os.Exit(healthCheck())
  	}
  	addr := net.JoinHostPort(listenHost(), listenPort())
@@ -169,21 +162,19 @@ index 14dc719..27f72d6 100644
  /* 响应式 */
  @media(max-width:820px){
 diff --git a/index.html b/index.html
-index 4e3b4bf..0faa83a 100644
+index 4e3b4bf..d95e8b5 100644
 --- a/index.html
 +++ b/index.html
-@@ -95,7 +95,10 @@
+@@ -95,6 +95,8 @@
          <p class="dz-title">把安装包拖到这里</p>
          <p class="muted">或</p>
          <button class="btn ghost" id="pick-files">选择文件</button>
 +        <!-- 仅自托管形态（NAS）显示：从绿联共享文件夹里挑安装包 -->
 +        <button class="btn ghost" id="pick-nas" hidden>从 NAS 选择</button>
          <input type="file" id="file-input" accept=".apk,.xapk,.apks,.apkm,application/vnd.android.package-archive" multiple hidden />
-+        <label class="dz-save" id="save-lib-wrap" hidden><input type="checkbox" id="save-to-lib" checked /> 存到安装包库（下次不用再传）</label>
        </div>
  
-       <ul class="queue" id="install-queue" aria-live="polite"></ul>
-@@ -333,6 +336,40 @@
+@@ -333,6 +335,26 @@
      </div>
    </div>
  
@@ -191,27 +182,13 @@ index 4e3b4bf..0faa83a 100644
 +  <div id="nas-modal" hidden>
 +    <div class="modal-card nas-card">
 +      <h3>从 NAS 选择安装包</h3>
-+      <div class="nas-tabs">
-+        <button class="nas-tab active" id="tab-lib" type="button">安装包库</button>
-+        <button class="nas-tab" id="tab-nas" type="button">已授权文件夹</button>
++      <div class="nas-bar">
++        <button id="nas-up" class="btn subtle" type="button" title="返回上一级">↑ 上一级</button>
++        <code id="nas-crumb">/</code>
++        <span class="spacer"></span>
++        <button id="nas-refresh" class="btn subtle" type="button">重新扫描</button>
 +      </div>
-+      <div id="pane-lib">
-+        <div class="nas-bar">
-+          <span class="muted" id="lib-space">读取中…</span>
-+          <span class="spacer"></span>
-+          <button id="lib-refresh" class="btn subtle" type="button">刷新</button>
-+        </div>
-+        <div class="nas-list" id="lib-list" role="listbox" aria-label="安装包库"></div>
-+      </div>
-+      <div id="pane-nas" hidden>
-+        <div class="nas-bar">
-+          <button id="nas-up" class="btn subtle" type="button" title="返回上一级">↑ 上一级</button>
-+          <code id="nas-crumb">/</code>
-+          <span class="spacer"></span>
-+          <button id="nas-refresh" class="btn subtle" type="button">重新扫描</button>
-+        </div>
-+        <div class="nas-list" id="nas-list" role="listbox" aria-label="NAS 安装包列表"></div>
-+      </div>
++      <div class="nas-list" id="nas-list" role="listbox" aria-label="NAS 安装包列表"></div>
 +      <p class="modal-sub" id="nas-note" hidden></p>
 +      <div class="nas-foot">
 +        <span class="muted">只显示 .apk / .xapk / .apkm · 「已授权文件夹」需先在 控制面板 → 关于本机 → 应用 → 盒子助手 → 配置 里授权，改动后点「重置应用」生效</span>
@@ -225,7 +202,7 @@ index 4e3b4bf..0faa83a 100644
    <pre id="diag" hidden></pre>
  
 diff --git a/js/app.js b/js/app.js
-index 2c723b6..dafc4c2 100644
+index 2c723b6..cd9f4d9 100644
 --- a/js/app.js
 +++ b/js/app.js
 @@ -217,7 +217,7 @@ async function showPortDialog(ip, reason){
@@ -233,27 +210,11 @@ index 2c723b6..dafc4c2 100644
          : '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口，明文进不去。<b>当前这个版本（连的是本机/容器里的桥）还不能配对</b>：请先用电脑执行一次 <code>adb tcpip 5555</code> 把盒子端口固定下来，之后回到这里只填 IP 就能连。');
    if(hint) hint.textContent = ip;
 -  if(inp) inp.value = '';
-+  if(inp) inp.value = (state.prefs.ports && state.prefs.ports[ip]) || '';
++  if(inp) inp.value = ''; // 绝不自动预填端口
    if(pinp) pinp.value = '';
    if(cinp) cinp.value = '';
    if(ok) ok.textContent = canPair ? '连接并固定端口' : '连接并固定端口';
-@@ -265,6 +265,7 @@ async function showPortDialog(ip, reason){
-       // 首次用本页面的钥匙连 5555，设备会弹「允许 USB 调试」：这不是失败，等用户点即可（给足 90 秒）
-       await T.connect({ ip, authTimeoutMs: 90000, onStall: (why) => handleStall(why, { stall, m }) });
-       state.device=await T.fetchDevice(ip); state.connected=true;
-+      if (!wantPair) state.prefs.ports = Object.assign({}, state.prefs.ports, { [ip]: port });
-       savePrefs();
-       m.hidden=true;
-       toast('已固定为 5555。第一次连本页面时电视会弹「允许 USB 调试」，点允许即可', '', 9000);
-@@ -385,6 +386,7 @@ function addFiles(files){ const ul=$('#install-queue');
-     li.querySelector('.q-x').onclick=()=>{ li.remove(); updateSummary(); };
-     li.querySelector('.q-install').onclick=()=>installOne(li);
-   }
-+  if (SELF_HOSTED && $('#save-to-lib')?.checked) pkgStore(Array.from(files));
-   updateSummary();
- }
- function updateSummary(){ const items=$$('#install-queue .q-item'); const n=items.length; const bytes=items.reduce((s,li)=>s+((li._file&&li._file.size)||0),0);
-@@ -417,9 +419,168 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
+@@ -417,9 +417,83 @@ function bindInstall(){ const dz=$('#dropzone'), input=$('#file-input');
    dz.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
    $('#install-all').addEventListener('click',installAll);
    $('#clear-queue').addEventListener('click',clearQueue);
@@ -322,10 +283,7 @@ index 2c723b6..dafc4c2 100644
 +}
 +function bindNas(){
 +  const btn = $('#pick-nas'); if (!btn) return;
-+  btn.addEventListener('click', () => { $('#nas-modal').hidden = false; nasTab('lib'); });
-+  $('#tab-lib')?.addEventListener('click', () => nasTab('lib'));
-+  $('#tab-nas')?.addEventListener('click', () => nasTab('nas'));
-+  $('#lib-refresh')?.addEventListener('click', () => libRender());
++  btn.addEventListener('click', () => { $('#nas-modal').hidden = false; nasRender(''); });
 +  $('#nas-close').addEventListener('click', () => { $('#nas-modal').hidden = true; });
 +  $('#nas-refresh').addEventListener('click', () => nasRender(nasPath));
 +  $('#nas-up').addEventListener('click', () => {
@@ -337,92 +295,10 @@ index 2c723b6..dafc4c2 100644
 +}
 +
 +
-+// ── 安装包库：存在应用自己的 data 目录，不需要任何系统授权 ─────────
-+async function pkgApi(path, opts){
-+  const T = await tango();
-+  const r = await fetch(`${T.BRIDGE_BASE}${path}`, opts);
-+  if (!r.ok) throw new Error('HTTP ' + r.status);
-+  return r.json();
-+}
-+function pkgLike(e){
-+  return {
-+    name: e.name, size: e.size || 0,
-+    async arrayBuffer(){
-+      const T = await tango();
-+      const r = await fetch(`${T.BRIDGE_BASE}/pkg/file?name=${encodeURIComponent(e.name)}`);
-+      if (!r.ok) throw new Error('从安装包库读取失败（HTTP ' + r.status + '）');
-+      return await r.arrayBuffer();
-+    },
-+  };
-+}
-+async function pkgStore(files){
-+  for (const f of files) {
-+    if (!f || !f.name) continue;
-+    if (!/\.(apk|xapk|apkm)$/i.test(f.name)) continue;
-+    toast(`正在存入安装包库：${f.name}…`, 'info', 2200);
-+    try {
-+      const fd = new FormData();
-+      fd.append('file', f, f.name);
-+      const d = await pkgApi('/pkg/upload', { method: 'POST', body: fd });
-+      if (d.ok) toast(`已存入安装包库：${d.name}`, 'info', 3200);
-+      else toast(d.message || '存入安装包库失败', 'warn', 5000);
-+    } catch (err) {
-+      toast('存入安装包库失败：' + err.message, 'err', 5000);
-+    }
-+  }
-+}
-+async function libRender(){
-+  const list = $('#lib-list'); if (!list) return;
-+  list.innerHTML = '<div class="nas-empty">读取中…</div>';
-+  let d;
-+  try { d = await pkgApi('/pkg/list'); }
-+  catch (err) { list.innerHTML = ''; return; }
-+  const sp = $('#lib-space');
-+  if (sp) sp.textContent = `已用 ${formatBytes(d.used || 0)} · 剩余 ${d.free >= 0 ? formatBytes(d.free) : '—'} · 单文件上限 ${d.maxMB || 0} MB`;
-+  const items = d.items || [];
-+  if (!items.length) {
-+    list.innerHTML = '<div class="nas-empty">库里还没有安装包：在「安装应用」里选文件并勾上「存到安装包库」，之后任何设备都能直接选它</div>';
-+    return;
-+  }
-+  list.innerHTML = '';
-+  for (const e of items) {
-+    const row = document.createElement('div');
-+    row.className = 'nas-row'; row.tabIndex = 0;
-+    row.innerHTML = `<span>📦</span><span class="nm">${escapeHtml(e.name)}</span>` +
-+      `<span class="sz">${formatBytes(e.size)} · ${new Date((e.mtime || 0) * 1000).toLocaleDateString()}</span>` +
-+      `<button class="del" type="button" title="从库里删除">删除</button>`;
-+    row.addEventListener('click', ev => {
-+      if (ev.target.classList.contains('del')) return;
-+      addFiles([pkgLike(e)]);
-+      $('#nas-modal').hidden = true;
-+      toast(`已加入队列：${e.name}`, 'info', 3200);
-+    });
-+    row.querySelector('.del').addEventListener('click', async ev => {
-+      ev.stopPropagation();
-+      ev.target.disabled = true;
-+      try {
-+        const d = await pkgApi('/pkg/delete?name=' + encodeURIComponent(e.name), { method: 'POST' });
-+        if (d.ok) { toast('已从库里删除：' + e.name, 'info'); libRender(); }
-+        else toast(d.message || '删除失败', 'warn', 5000);
-+      } catch (err) { toast('删除失败：' + err.message, 'err', 5000); ev.target.disabled = false; }
-+    });
-+    list.appendChild(row);
-+  }
-+}
-+function nasTab(which){
-+  const lib = which === 'lib';
-+  $('#tab-lib')?.classList.toggle('active', lib);
-+  $('#tab-nas')?.classList.toggle('active', !lib);
-+  const pl = $('#pane-lib'), pn = $('#pane-nas');
-+  if (pl) pl.hidden = !lib;
-+  if (pn) pn.hidden = lib;
-+  if (lib) libRender(); else nasRender(nasPath);
-+}
-+
  // ── 应用管理 ───────────────────────────────────────────
  async function refreshApps(){ const body=$('#apps-body');
    if(!state.connected){ body.innerHTML='<div class="empty">未连接设备 — 连接后将在此显示应用列表。</div>'; return; }
-@@ -539,9 +700,17 @@ function showInsecureDialog(){
+@@ -539,9 +613,17 @@ function showInsecureDialog(){
    //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
    const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
    const ownTls=/^\d{2,5}$/.test(tlsPort);
@@ -821,332 +697,4 @@ index 0000000..cca9e76
 +		return false
 +	}
 +	return true
-+}
-diff --git a/pkgstore.go b/pkgstore.go
-new file mode 100644
-index 0000000..84d7e34
---- /dev/null
-+++ b/pkgstore.go
-@@ -0,0 +1,280 @@
-+package main
-+
-+// 安装包库：把用户上传的 apk / xapk / apkm 存进应用自己的 data 目录
-+// （UGAPP_DATA_DIR/packages），之后局域网里任何设备都能直接选来装，不用重复上传。
-+//
-+// 为什么用它而不是只靠「可访问文件夹」授权：
-+//   · data 目录是应用用户天然可读写的，不需要任何系统授权；
-+//   · 不受「改完授权必须重置应用」的限制；
-+//   · 卸载时随应用一起清掉，不会在用户存储里留垃圾。
-+//
-+// 端点：
-+//   GET    /pkg/list              列表 + 剩余空间
-+//   POST   /pkg/upload            multipart 字段 file，流式落盘
-+//   GET    /pkg/file?name=        读取（供前端安装）
-+//   POST   /pkg/delete?name=      删除
-+//   POST   /pkg/purge             清空整个库
-+
-+import (
-+	"encoding/json"
-+	"fmt"
-+	"io"
-+	"log"
-+	"net/http"
-+	"os"
-+	"path/filepath"
-+	"sort"
-+	"strings"
-+	"syscall"
-+	"time"
-+)
-+
-+const pkgMaxNameLen = 120
-+
-+func pkgDir() string {
-+	d := filepath.Join(dataDir(), "packages")
-+	_ = os.MkdirAll(d, 0o755)
-+	return d
-+}
-+
-+func pkgMaxBytes() int64 {
-+	mb := 1024
-+	if v := strings.TrimSpace(os.Getenv("BRIDGE_PKG_MAX_MB")); v != "" {
-+		if n, err := fmt.Sscanf(v, "%d", &mb); n != 1 || err != nil {
-+			mb = 1024
-+		}
-+	}
-+	if mb <= 0 {
-+		mb = 1024
-+	}
-+	return int64(mb) << 20
-+}
-+
-+type pkgEntry struct {
-+	Name  string `json:"name"`
-+	Size  int64  `json:"size"`
-+	MTime int64  `json:"mtime"`
-+}
-+
-+// pkgSafeName 只保留纯文件名：拒绝路径分隔符、..、隐藏文件与非法扩展名
-+func pkgSafeName(raw string) (string, bool) {
-+	n := filepath.Base(strings.ReplaceAll(raw, "\\", "/"))
-+	if n == "" || n == "." || n == ".." || n != raw {
-+		return "", false
-+	}
-+	if strings.HasPrefix(n, ".") || strings.Contains(n, "/") || strings.Contains(n, "..") {
-+		return "", false
-+	}
-+	n = strings.Map(func(r rune) rune {
-+		switch {
-+		case r == 0 || r < 0x20 || r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
-+			return '_'
-+		}
-+		return r
-+	}, n)
-+	if len(n) > pkgMaxNameLen {
-+		ext := filepath.Ext(n)
-+		n = n[:pkgMaxNameLen-len(ext)] + ext
-+	}
-+	if !pkgExtOK[strings.ToLower(filepath.Ext(n))] {
-+		return "", false
-+	}
-+	return n, true
-+}
-+
-+var pkgExtOK = map[string]bool{".apk": true, ".xapk": true, ".apkm": true}
-+
-+// pkgFree 返回库所在分区的可用字节
-+func pkgFree() int64 {
-+	var st syscall.Statfs_t
-+	if err := syscall.Statfs(dataDir(), &st); err != nil {
-+		return -1
-+	}
-+	return int64(st.Bavail) * int64(st.Bsize)
-+}
-+
-+func pkgList() []pkgEntry {
-+	des, err := os.ReadDir(pkgDir())
-+	if err != nil {
-+		return nil
-+	}
-+	out := make([]pkgEntry, 0, len(des))
-+	for _, de := range des {
-+		if de.IsDir() {
-+			continue
-+		}
-+		info, err := de.Info()
-+		if err != nil {
-+			continue
-+		}
-+		if !pkgExtOK[strings.ToLower(filepath.Ext(de.Name()))] {
-+			continue
-+		}
-+		out = append(out, pkgEntry{Name: de.Name(), Size: info.Size(), MTime: info.ModTime().Unix()})
-+	}
-+	sort.Slice(out, func(i, j int) bool {
-+		if out[i].MTime == out[j].MTime {
-+			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-+		}
-+		return out[i].MTime > out[j].MTime
-+	})
-+	return out
-+}
-+
-+// pkgUniquePath 同名文件自动加序号，避免覆盖
-+func pkgUniquePath(name string) string {
-+	p := filepath.Join(pkgDir(), name)
-+	if _, err := os.Stat(p); err != nil {
-+		return p
-+	}
-+	ext := filepath.Ext(name)
-+	stem := strings.TrimSuffix(name, ext)
-+	for i := 1; i < 1000; i++ {
-+		cand := filepath.Join(pkgDir(), fmt.Sprintf("%s-%d%s", stem, i, ext))
-+		if _, err := os.Stat(cand); err != nil {
-+			return cand
-+		}
-+	}
-+	return p
-+}
-+
-+func pkgJSON(w http.ResponseWriter, v any) {
-+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-+	_ = json.NewEncoder(w).Encode(v)
-+}
-+
-+func handlePkgList(w http.ResponseWriter) {
-+	items := pkgList()
-+	var used int64
-+	for _, it := range items {
-+		used += it.Size
-+	}
-+	pkgJSON(w, map[string]any{"ok": true, "items": items, "used": used, "free": pkgFree(),
-+		"maxMB": pkgMaxBytes() >> 20, "dir": pkgDir()})
-+}
-+
-+func handlePkgUpload(w http.ResponseWriter, r *http.Request) {
-+	max := pkgMaxBytes()
-+	r.Body = http.MaxBytesReader(w, r.Body, max+(8<<20))
-+	if err := r.ParseMultipartForm(8 << 20); err != nil {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "上传失败或文件过大（上限 " + fmt.Sprint(max>>20) + "MB）"})
-+		return
-+	}
-+	defer r.MultipartForm.RemoveAll()
-+	f, hdr, err := r.FormFile("file")
-+	if err != nil {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "没有收到文件"})
-+		return
-+	}
-+	defer f.Close()
-+	name, ok := pkgSafeName(hdr.Filename)
-+	if !ok {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "只支持 .apk / .xapk / .apkm"})
-+		return
-+	}
-+	if free := pkgFree(); free >= 0 && free < hdr.Size+(64<<20) {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "存储空间不足"})
-+		return
-+	}
-+	dst := pkgUniquePath(name)
-+	tmp := dst + ".part"
-+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-+	if err != nil {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "写入失败：" + err.Error()})
-+		return
-+	}
-+	n, err := io.Copy(out, f)
-+	if cerr := out.Close(); err == nil {
-+		err = cerr
-+	}
-+	if err != nil {
-+		_ = os.Remove(tmp)
-+		pkgJSON(w, map[string]any{"ok": false, "message": "上传中断：" + err.Error()})
-+		return
-+	}
-+	if err := os.Rename(tmp, dst); err != nil {
-+		_ = os.Remove(tmp)
-+		pkgJSON(w, map[string]any{"ok": false, "message": "保存失败：" + err.Error()})
-+		return
-+	}
-+	final := filepath.Base(dst)
-+	log.Printf("[pkg] 存入安装包库 %s (%d 字节)", final, n)
-+	pkgJSON(w, map[string]any{"ok": true, "name": final, "size": n})
-+}
-+
-+func handlePkgFile(w http.ResponseWriter, r *http.Request) {
-+	name, ok := pkgSafeName(r.URL.Query().Get("name"))
-+	if !ok {
-+		http.Error(w, "文件名不合法", http.StatusForbidden)
-+		return
-+	}
-+	p := filepath.Join(pkgDir(), name)
-+	st, err := os.Stat(p)
-+	if err != nil {
-+		http.Error(w, "文件不存在", http.StatusNotFound)
-+		return
-+	}
-+	f, err := os.Open(p)
-+	if err != nil {
-+		http.Error(w, "文件不可读", http.StatusForbidden)
-+		return
-+	}
-+	defer f.Close()
-+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
-+	http.ServeContent(w, r, name, st.ModTime().Round(time.Second), f)
-+}
-+
-+func handlePkgDelete(w http.ResponseWriter, r *http.Request) {
-+	name, ok := pkgSafeName(r.URL.Query().Get("name"))
-+	if !ok {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "文件名不合法"})
-+		return
-+	}
-+	p := filepath.Join(pkgDir(), name)
-+	if err := os.Remove(p); err != nil {
-+		pkgJSON(w, map[string]any{"ok": false, "message": "删除失败：" + err.Error()})
-+		return
-+	}
-+	log.Printf("[pkg] 从安装包库删除 %s", name)
-+	pkgJSON(w, map[string]any{"ok": true, "name": name})
-+}
-+
-+func handlePkgPurge(w http.ResponseWriter) {
-+	n := 0
-+	for _, it := range pkgList() {
-+		if err := os.Remove(filepath.Join(pkgDir(), it.Name)); err == nil {
-+			n++
-+		}
-+	}
-+	pkgJSON(w, map[string]any{"ok": true, "removed": n})
-+}
-+
-+func handlePkg(w http.ResponseWriter, r *http.Request) bool {
-+	switch r.URL.Path {
-+	case "/pkg/list":
-+		handlePkgList(w)
-+	case "/pkg/upload":
-+		if r.Method != http.MethodPost {
-+			http.Error(w, "method", http.StatusMethodNotAllowed)
-+			return true
-+		}
-+		handlePkgUpload(w, r)
-+	case "/pkg/file":
-+		handlePkgFile(w, r)
-+	case "/pkg/delete":
-+		if r.Method != http.MethodPost {
-+			http.Error(w, "method", http.StatusMethodNotAllowed)
-+			return true
-+		}
-+		handlePkgDelete(w, r)
-+	case "/pkg/purge":
-+		if r.Method != http.MethodPost {
-+			http.Error(w, "method", http.StatusMethodNotAllowed)
-+			return true
-+		}
-+		handlePkgPurge(w)
-+	default:
-+		return false
-+	}
-+	return true
-+}
-diff --git a/webapp_on.go b/webapp_on.go
-index 3555ce6..c3823cf 100644
---- a/webapp_on.go
-+++ b/webapp_on.go
-@@ -8,7 +8,6 @@ import (
- 	"io/fs"
- 	"log"
- 	"net/http"
--	"os"
- 	"strings"
- 	"time"
- )
-@@ -23,10 +22,15 @@ var webappFS embed.FS
- // 自托管标记：运行时注入 index.html，让前端把桥地址切到「同源 + 前缀」。
- // 不改 JS 源码：仓库前端与镜像前端字节一致。子路径部署用 BRIDGE_BASE_PATH（如 /boxadb）。
- func bridgeMeta() string {
--	prefix := os.Getenv("BRIDGE_BASE_PATH")
-+	prefix := ugosBasePath() // BRIDGE_BASE_PATH 优先；UGOS 形态默认 /boxadb
-+	platform := ""
-+	if ugosMode() {
-+		platform = `<meta name="boxadb-platform" content="ugos">`
-+	}
- 	return `<meta name="boxadb-mode" content="selfhosted">` +
- 		`<meta name="boxadb-prefix" content="` + prefix + `">` +
--		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">`
-+		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">` +
-+		platform
- }
- 
- func staticHandler() http.Handler {
-@@ -83,4 +87,10 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
- func privateOnlyDefault() bool { return true }
- 
- // 自托管默认开内置 https（8766）：手机需要安全上下文；BRIDGE_HTTPS_PORT=0 可关。
--func httpsDefault() string { return "8766" }
-+// UGOS 形态默认关：https 由系统网关提供，桥只跑纯 http + WS。
-+func httpsDefault() string {
-+	if ugosMode() {
-+		return "0"
-+	}
-+	return "8766"
 +}

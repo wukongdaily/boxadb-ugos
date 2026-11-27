@@ -1,7 +1,7 @@
 # boxadb UGOS 原生应用（真实版，路线 A：inner + 系统反代 + WS）
 spec_version: 2.1
 app_id: com.wukongdaily.boxadb
-version: 0.6.0
+version: 0.6.1
 
 support_arch:
   - amd64
