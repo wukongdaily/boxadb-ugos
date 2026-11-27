@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>盒子助手 · BoxADB — 面向电视/盒子的网页版 ADB 助手</title>
+  <meta name="description" content="专为 Android TV / 电视盒子设计的网页版 ADB 工具箱：安装 APK/XAPK/APKS、终端、遥控器快捷键、截图、重启。" />
+  <link rel="icon" type="image/png" href="assets/logo.png" />
+  <link rel="stylesheet" href="css/xterm.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- 顶部：品牌 + 连接 + 标签导航（一起 sticky，任何面板滚动都可见） -->
+  <div class="sticky-header">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/logo.png" alt="盒子助手" aria-hidden="true" />
+        <span class="brand-name">盒子助手</span>
+        <span class="brand-sub">BoxADB</span>
+        <a class="social-icon" href="https://space.bilibili.com/250915741" target="_blank" rel="noopener" title="B站 · 悟空的日常" aria-label="B站主页">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7.2 4.6 9.3 8M16.8 4.6 14.7 8"/>
+            <path d="M3.5 9.6A2.6 2.6 0 0 1 6.1 7h11.8a2.6 2.6 0 0 1 2.6 2.6v6.8a2.6 2.6 0 0 1-2.6 2.6H6.1a2.6 2.6 0 0 1-2.6-2.6Z"/>
+            <path d="M8.6 11.6v3.2M15.4 11.6v3.2"/>
+          </svg>
+        </a>
+        <a class="social-icon" href="https://hub.docker.com/r/wukongdaily/boxadb" target="_blank" rel="noopener" title="Docker Hub 镜像页" aria-label="Docker Hub">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg>
+        </a>
+        <a class="brand-tutorial" href="https://www.bilibili.com/video/BV1RwsG6dEd9" target="_blank" rel="noopener" title="看使用教程">教程</a>
+      </div>
+
+      <div class="conn">
+        <input id="device-ip" type="text" inputmode="decimal" autocomplete="off"
+               placeholder="盒子 IP，如 192.168.66.172" spellcheck="false" />
+        <button id="connect-btn" class="btn primary">连接</button>
+        <!-- 默认隐藏：仅 Pages / 桌面版且浏览器支持 WebUSB 时由 app.js 显示 -->
+        <button id="usb-toggle" type="button" class="btn subtle" hidden title="用 USB 数据线直连（需 Chrome / Edge）">🔌 USB 直连</button>
+        <button id="wl-toggle" type="button" class="btn subtle" hidden title="Android 11+ 无线调试：用配对码配对，自动固定 5555">📶 无线调试</button>
+        <span id="status-pill" class="pill off">未连接</span>
+      </div>
+    </header>
+
+    <div id="usb-panel" class="usb-panel" hidden>
+      <p class="muted">仅限 Chrome / Edge。步骤：① 数据线把盒子连到电脑；② 若之前用过命令行 adb，先执行 <code>adb kill-server</code> 释放设备；③ 点下面按钮选择设备，并在盒子上点「允许 USB 调试」。</p>
+      <div class="usb-actions">
+        <button id="connect-usb-btn" class="btn primary">选择 USB 设备并连接</button>
+        <button id="usb-close" class="btn" type="button">关闭</button>
+      </div>
+    </div>
+
+    <div id="wl-panel" class="usb-panel" hidden>
+      <p class="muted">适用于 Android 11 及以上的「无线调试」（手机 / Google TV / 新盒子）。电视上依次打开：设置 → 系统 → 开发者选项 → 无线调试 → <b>使用配对码配对设备</b>，把屏幕上的<b>配对端口</b>和 <b>6 位配对码</b>填到下面。配对成功后会自动把端口固定回 5555，之后正常点「连接」即可。</p>
+      <div class="wl-grid">
+        <input id="wl-ip" type="text" inputmode="decimal" autocomplete="off" placeholder="盒子 IP" spellcheck="false" />
+        <input id="wl-pair-port" type="text" inputmode="numeric" autocomplete="off" placeholder="配对端口" />
+        <input id="wl-code" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="6 位配对码" />
+        <input id="wl-conn-port" type="text" inputmode="numeric" autocomplete="off" placeholder="连接端口（可留空）" />
+      </div>
+      <div class="wl-actions">
+        <button id="wl-pair-btn" class="btn primary">配对并固定 5555</button>
+        <button id="wl-discover" class="btn" type="button">自动发现</button>
+        <button id="wl-fix-btn" class="btn" type="button">修复连接</button>
+        <button id="wl-close" class="btn" type="button">关闭</button>
+      </div>
+      <pre id="wl-log" class="wl-log" hidden></pre>
+    </div>
+
+    <div class="tabs-wrap">
+      <button class="tabs-arrow left" id="tabs-left" aria-label="向左滚动">‹</button>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-view="install">📦 安装应用</button>
+        <button class="tab" data-view="device">📺 设备信息</button>
+        <button class="tab" data-view="terminal"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>ADB 终端</button>
+        <button class="tab" data-view="apps">🗂 应用管理</button>
+        <button class="tab" data-view="remote">🎮 遥控器</button>
+        <button class="tab" data-view="logcat">📜 日志</button>
+      </nav>
+      <button class="tabs-arrow right" id="tabs-right" aria-label="向右滚动">›</button>
+    </div>
+  </div>
+
+  <!-- 内容区 -->
+  <main class="content">
+
+    <!-- 安装 -->
+    <section class="panel" id="view-install">
+      <div class="panel-head">
+        <h2>安装应用</h2>
+        <p class="muted">拖入或选择安装包，自动识别 <code>.apk</code> / <code>.xapk</code> / <code>.apkm</code> 支持流式安装，不占盒子存储。</p>
+      </div>
+
+      <div class="dropzone" id="dropzone" tabindex="0">
+        <svg viewBox="0 0 24 24" class="dz-icon" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+        <p class="dz-title">把安装包拖到这里</p>
+        <p class="muted">或</p>
+        <button class="btn ghost" id="pick-files">选择文件</button>
+        <!-- 仅自托管形态（NAS）显示：从绿联共享文件夹里挑安装包 -->
+        <button class="btn ghost" id="pick-nas" hidden>从 NAS 选择</button>
+        <input type="file" id="file-input" accept=".apk,.xapk,.apks,.apkm,application/vnd.android.package-archive" multiple hidden />
+      </div>
+
+      <ul class="queue" id="install-queue" aria-live="polite"></ul>
+
+      <div class="queue-bar">
+        <span id="queue-summary" class="muted">队列为空</span>
+        <span class="spacer"></span>
+        <button class="btn primary" id="install-all" disabled>▶ 全部安装</button>
+        <button class="btn ghost" id="clear-queue" disabled>清空</button>
+      </div>
+    </section>
+
+    <!-- 应用管理 -->
+    <section class="panel hidden" id="view-apps">
+      <div class="panel-head">
+        <h2>应用管理</h2>
+        <p class="muted">第三方应用可卸载；系统应用不可卸载，仅可禁用（可随时启用恢复）。</p>
+      </div>
+      <div class="apps-toolbar">
+        <div class="seg" id="apps-scope" role="tablist" aria-label="应用分组">
+          <button class="seg-btn active" data-scope="third" role="tab" aria-selected="true">第三方应用</button>
+          <button class="seg-btn" data-scope="system" role="tab" aria-selected="false">系统应用</button>
+        </div>
+        <button class="btn" id="refresh-apps">↻ 刷新列表</button>
+        <input id="app-search" class="search" type="search" placeholder="搜索应用名或包名" />
+      </div>
+      <div id="apps-body">
+        <div class="empty"><span>未连接设备 — 连接后将在此显示应用列表。</span></div>
+      </div>
+    </section>
+
+    <!-- 遥控器 -->
+    <section class="panel hidden" id="view-remote">
+      <div class="panel-head">
+        <h2>遥控器</h2>
+        <p class="muted">把手机 / 电脑变成盒子遥控器。</p>
+      </div>
+      <div class="remote-wrap">
+        <div class="remote">
+          <div class="remote-top">
+            <button class="rkey power" data-key="26" title="电源/待机">⏻</button>
+            <button class="rkey" data-key="138" title="Info">ⓘ</button>
+          </div>
+          <div class="vol-row">
+            <button class="rkey" data-key="24" title="音量 +">＋</button>
+            <button class="rkey" data-key="25" title="音量 −">－</button>
+          </div>
+          <div class="dpad">
+            <button class="dp up"    data-key="19">▲</button>
+            <button class="dp left"  data-key="21">◀</button>
+            <button class="dp ok"    data-key="23">OK</button>
+            <button class="dp right" data-key="22">▶</button>
+            <button class="dp down"  data-key="20">▼</button>
+          </div>
+          <div class="nav-row center">
+            <button class="rkey" data-key="4" title="返回">↩</button>
+            <button class="rkey" data-key="3" title="Home">🏠</button>
+            <button class="rkey" data-key="82" title="Menu">☰</button>
+          </div>
+          <div class="media-row center">
+            <button class="rkey" data-key="88" title="上一曲">⏮</button>
+            <button class="rkey" data-key="85" title="播放/暂停">⏯</button>
+            <button class="rkey" data-key="87" title="下一曲">⏭</button>
+          </div>
+        </div>
+
+        <div class="device-actions">
+          <h3>设备操作</h3>
+          <button class="btn action" data-act="screenshot">📸 截屏并下载</button>
+          <button class="btn action" data-act="reboot">🔄 重启</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 终端 -->
+    <section class="panel hidden" id="view-terminal">
+      <div class="panel-head">
+        <h2>ADB 终端</h2>
+        <p class="muted">交互式 shell（真 PTY）。支持上下方向键翻历史记录、TAB 键自动补全命令</p>
+      </div>
+      <div class="terminal" id="term"></div>
+    </section>
+
+    <!-- 日志 -->
+    <section class="panel hidden" id="view-logcat">
+      <div class="panel-head">
+        <h2>实时日志 (logcat)</h2>
+        <p class="muted">抓盒子系统日志，按标签/优先级过滤，支持下载。</p>
+      </div>
+      <div class="log-toolbar">
+        <button class="btn" id="log-start">▶ 开始</button>
+        <button class="btn" id="log-stop">⏹ 停止</button>
+        <button class="btn ghost" id="log-clear">🗑 清屏</button>
+        <input id="log-filter" class="search" type="search" placeholder="过滤关键字 / TAG" />
+        <button class="btn ghost" id="log-download">⬇ 下载</button>
+      </div>
+      <div class="log-body"><pre id="log-out">// 日志输出区（待接入）。未连接时为空。</pre></div>
+    </section>
+
+    <!-- 设备 -->
+    <section class="panel hidden" id="view-device">
+      <div class="panel-head">
+        <h2>设备信息</h2>
+        <p class="muted">已连接设备的只读信息。</p>
+      </div>
+      <div class="info-grid" id="info-grid">
+        <div class="info-item"><span class="k">CPU</span><span class="v" id="i-cpu">—</span></div>
+        <div class="info-item"><span class="k">GPU</span><span class="v" id="i-gpu">—</span></div>
+        <div class="info-item"><span class="k">型号</span><span class="v" id="i-model">—</span></div>
+        <div class="info-item"><span class="k">品牌</span><span class="v" id="i-brand">—</span></div>
+        <div class="info-item"><span class="k">系统 (Android)</span><span class="v" id="i-android">—</span></div>
+        <div class="info-item"><span class="k">系统架构</span><span class="v" id="i-arch">—</span></div>
+        <div class="info-item"><span class="k">内存</span><span class="v" id="i-mem">—</span></div>
+        <div class="info-item"><span class="k">分辨率</span><span class="v" id="i-res">—</span></div>
+        <div class="info-item"><span class="k">已装第三方应用</span><span class="v" id="i-appcount">—</span></div>
+        <div class="info-item"><span class="k">运行时长</span><span class="v" id="i-uptime">—</span></div>
+        <div class="info-item wide">
+          <span class="k">存储 <span id="i-storage-pct" class="muted"></span></span>
+          <div class="storage-bar"><i id="i-storage-bar"></i></div>
+          <span class="v small" id="i-storage">—</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <a class="social-icon" href="https://youtu.be/0jF1lBZ4Elw" target="_blank" rel="noopener" title="YouTube · 悟空的日常" aria-label="YouTube 频道">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="5.8" width="19" height="12.4" rx="3.6"/>
+        <path d="M10.3 9.4 14.8 12l-4.5 2.6Z"/>
+      </svg>
+    </a>
+    <a class="social-icon" href="https://space.bilibili.com/250915741" target="_blank" rel="noopener" title="B站 · 悟空的日常" aria-label="B站主页">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3.2" y="8" width="17.6" height="11" rx="2.8"/>
+        <path d="M7.5 8 5.7 4.9M16.5 8l1.8-3.1"/>
+        <path d="M8.6 11.8v3M15.4 11.8v3"/>
+      </svg>
+    </a>
+    <a class="social-icon" href="https://club.fnnas.com/forum.php?mod=viewthread&tid=77159&extra=page%3D1" target="_blank" rel="noopener" title="飞牛 · 社区帖" aria-label="飞牛社区">
+      <svg viewBox="0 0 512 512" width="20" height="20" fill="#6B7688" stroke="none" aria-hidden="true">
+        <path d="M99.2 165.4C86.6 179.4 79 198 79 218.3v.3H63.5C28.4 218.6 0 190.1 0 155.1C0 123.2 13.2 92.7 36.5 71l16-15s-25 49.2-13.5 77.9c5.1 12.9 18.9 28.1 60.2 31.5m88.4 52.9h260.9c35.1 0 63.5-28.4 63.5-63.5c0-31.9-13.2-62.3-36.5-84.1l-16-15s25 49.2 13.5 77.9c-5.9 14.7-22.9 32.2-41.5 32.2h-244c-35.1 0-63.5 28.4-63.5 63.5V408c0 26.7 21.6 48.3 48.3 48.3h66.4c17.3 0 31.3-14 31.3-31.3v-41.1h45.8c17.3 0 31.3-14 31.3-31.3v-35.9c39.3 0 76.5-18.3 100.4-49.5l2.3-3H326.1c-17.3 0-31.3 14-31.3 31.3v29.1c0 3.7-3 6.8-6.8 6.8h-39.1c-17.3 0-31.3 14-31.3 31.3v28.9c0 6.7-5.5 12.2-12.2 12.2h-16.7c-6.7 0-12.2-5.5-12.2-12.2V229.3c0-6.1 5-11 11.1-11"/>
+      </svg>
+    </a>
+    <a class="social-icon" href="https://github.com/wukongdaily/boxadb" target="_blank" rel="noopener" title="GitHub · 仓库" aria-label="GitHub 仓库">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2c2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2a4.2 4.2 0 0 0-.1-3.2s-1.2-.4-4 1.5a5 5 0 0 0-2.6 0c-2.8-1.9-4-1.5-4-1.5a4.2 4.2 0 0 0-.1 3.2a4.6 4.6 0 0 0-1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6-.6 1.2-.5 2v3.5"/>
+      </svg>
+    </a>
+  </footer>
+
+  <!-- 非加密访问引导弹窗（浏览器禁止 http 页面生成 ADB 密钥）-->
+  <div id="insecure-modal" hidden>
+    <div class="modal-card">
+      <h3>需要换成加密方式打开</h3>
+      <p>你现在是用 <b>http://</b>（不加密）访问的。浏览器有条安全规定：<b>不加密的页面不能生成 ADB 密钥</b>，所以连不上盒子。这跟盒子、网络都没关系，换个地址就能解决。</p>
+
+      <!-- 绿联 UGOS 引导：从系统桌面打开（https 由绿联网关提供，无需证书操作） -->
+      <div id="insecure-ugos" hidden>
+        <p>绿联 UGOS 版<b>盒子助手</b>请从 <b>UGOS 桌面的「盒子助手」图标</b>打开（或应用中心启动）。</p>
+        <ol class="modal-steps">
+          <li>系统会通过绿联的加密网关访问应用，自动获得 HTTPS 安全上下文，<b>无需任何证书操作</b>。</li>
+          <li>当前直接访问桥端口的 http 页面无法生成 ADB 密钥（浏览器安全限制），关掉即可。</li>
+        </ol>
+      </div>
+
+      <!-- 飞牛版引导：跳飞牛加密主页 -->
+      <div id="insecure-fnos">
+        <button id="insecure-fix" class="btn">🔒 打开飞牛加密主页</button>
+        <p class="modal-url" id="insecure-url"></p>
+        <ol class="modal-steps">
+          <li>新标签打开后，若出现「连接不是私密连接」→ 点 <b>高级</b> → <b>继续访问</b>（只需一次，以后不再提示）。</li>
+          <li>进入飞牛桌面后，<b>重新点开「盒子助手」图标</b>，即可正常连接盒子。</li>
+          <li>当前这个不加密的页面可以直接关掉。</li>
+        </ol>
+        <p class="modal-sub">按钮没反应？手动改地址栏：把 <code>http://</code> 改成 <code>https://</code>、端口 <code>5666</code> 改成 <code>5667</code>（飞牛默认加密端口），回车即可。</p>
+      </div>
+
+      <!-- 自托管（NAS/Docker）引导：改用服务自带的 https 端口 -->
+      <div id="insecure-selfhost" hidden>
+        <p>这个页面由<b>盒子助手服务</b>自己发出（NAS / Docker 形态）。改用加密地址即可解决：</p>
+        <button id="insecure-tls" class="btn" hidden>🔒 用加密方式打开（https）</button>
+        <p class="modal-url" id="insecure-tls-url"></p>
+        <p class="modal-sub">首次会提示「连接不是私密连接」→ 点 <b>高级</b> → <b>继续访问</b>。只需一次，以后一直可用。</p>
+        <ol class="modal-steps">
+          <li>手机 / 平板 / 其他电脑：直接用上面按钮切到 https 就行。</li>
+          <li>电脑上也可用端口转发后访问本机地址（本机地址浏览器天然放行）：
+            <pre class="modal-code">ssh -L 8765:127.0.0.1:8765 你的用户名@NAS的IP</pre>
+            再打开 <code>http://localhost:8765/</code>。</li>
+        </ol>
+      </div>
+
+      <button id="insecure-later" class="btn subtle">先不了，稍后处理</button>
+    </div>
+  </div>
+
+  <!-- 设备没在 5555 上监听时出现：按电视两屏的顺序填 -->
+  <div id="port-modal" hidden>
+    <div class="modal-card">
+      <h3 id="port-title">这台设备的 5555 端口没有反应</h3>
+      <p id="port-desc">多数是重启后调试端口变成了随机值（安卓 11 以上的电视常见）。填一次电视上显示的端口，我连上后会<b>自动把它固定成 5555</b>，以后只填 IP 就能连。</p>
+      <p class="modal-sub">在<b>电视</b>上：<b>设置 → 开发者选项 → 无线调试</b>。第一屏写着「IP 地址与端口」；点开<b>「使用配对码配对设备」</b>后的第二屏才有 6 位配对码和配对端口。</p>
+
+      <div class="field-group">
+        <div class="field-step">① 第一屏：设备地址与连接端口</div>
+        <div class="port-row">
+          <span id="port-modal-ip" class="port-ip"></span>
+          <input id="port-input" type="text" inputmode="numeric" autocomplete="off" placeholder="连接端口，如 37521" spellcheck="false" />
+          <button id="port-detect" class="btn subtle ghost" type="button" title="从局域网自动查出这台盒子的无线调试端口">自动填端口</button>
+        </div>
+      </div>
+
+      <div class="field-group" id="pair-group">
+        <div class="field-step">② 第二屏：配对码与配对端口 <span class="field-note">（设备要求配对时才填，顺序与电视上一样）</span></div>
+        <div class="port-row pair-row">
+          <label class="pair-field"><span class="pair-cap">配对码</span>
+            <input id="pair-code-input" class="pair-code" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="000000" spellcheck="false" />
+          </label>
+          <label class="pair-field"><span class="pair-cap">配对端口</span>
+            <input id="pair-port-input" class="pair-port" type="text" inputmode="numeric" autocomplete="off" placeholder="如 40217" spellcheck="false" />
+          </label>
+        </div>
+      </div>
+
+      <p class="modal-sub" id="port-stall" hidden>这个端口只接受配对后的加密连接：请把第二屏的<b>配对端口</b>和 <b>6 位配对码</b>填到 ② 里再提交。配对窗口开着别锁屏，码会过期。</p>
+      <div class="allow-wait" id="pair-allow" hidden>
+        <b>电视上应该已经弹出「允许 USB 调试」</b> —— 点<b>允许</b>（能勾「一律允许」就勾上）。
+        <div class="allow-sub">我已经收到设备的应答，只是在等你这一下点击；点完会自动继续，不用重新填。</div>
+      </div>
+      <button id="port-ok" class="btn primary">连接并固定端口</button>
+      <button id="port-cancel" class="btn subtle">取消</button>
+      <p class="modal-sub" id="pair-note">填了 ② 就先配对再连接；只填 ① 则按明文端口直接连。</p>
+      <p class="modal-sub tip-allow">固定好端口后，<b>第一次</b>从本页面连接时电视上会弹「允许 USB 调试」，点<b>允许</b>即可（同一台电脑只需一次）。</p>
+    </div>
+  </div>
+
+  <!-- NAS 安装包选择器（自托管形态） -->
+  <div id="nas-modal" hidden>
+    <div class="modal-card nas-card">
+      <h3>从 NAS 选择安装包</h3>
+      <div class="nas-bar">
+        <button id="nas-up" class="btn subtle" type="button" title="返回上一级">↑ 上一级</button>
+        <code id="nas-crumb">/</code>
+        <span class="spacer"></span>
+        <button id="nas-refresh" class="btn subtle" type="button">重新扫描</button>
+      </div>
+      <div class="nas-list" id="nas-list" role="listbox" aria-label="NAS 安装包列表"></div>
+      <p class="modal-sub" id="nas-note" hidden></p>
+      <div class="nas-foot">
+        <span class="muted">只显示 .apk / .xapk / .apkm · 「已授权文件夹」需先在 控制面板 → 关于本机 → 应用 → 盒子助手 → 配置 里授权，改动后点「重置应用」生效</span>
+        <span class="spacer"></span>
+        <button id="nas-close" class="btn subtle" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 仅 URL 带 ?diag=1 时由 app.js 显示：把连不上的原因分类，便于远程定位机型问题 -->
+  <pre id="diag" hidden></pre>
+
+  <!-- 等待用户打开「无线调试」：全屏倒计时，连上即收 -->
+  <div id="pair-countdown" class="cd-mask" hidden>
+    <div class="cd-box">
+      <div class="cd-dial">
+        <svg class="cd-ring" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="cd-track" cx="60" cy="60" r="54"></circle>
+          <circle class="cd-bar" id="cd-bar" cx="60" cy="60" r="54"></circle>
+        </svg>
+        <div class="cd-num" id="cd-num">90</div>
+      </div>
+      <div class="cd-text" id="cd-text-a">请在电视上打开</div>
+      <div class="cd-key" id="cd-text-b">「无线调试」开关</div>
+      <div class="cd-sub">打开后我会自动连接，不需要再输配对码</div>
+      <button id="cd-cancel" class="btn subtle" type="button">取消等待</button>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <!-- xterm.js + fit 插件（UMD，挂到 window.Terminal / window.FitAddon）-->
+  <script src="js/vendor/xterm.js"></script>
+  <script src="js/vendor/addon-fit.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

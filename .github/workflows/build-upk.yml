@@ -60,7 +60,8 @@ jobs:
           path: |
             .work
             rootfs_amd64/bin/node
-          key: ugos-node-v24.22.3-linux-x64
+            rootfs_arm64/bin/node
+          key: ugos-node-v24.22.3
 
       # build.sh：拉主仓 → 幂等打 ugos.patch → 下 Node（校验 sha256）→ 交叉编译 → ugcli check + pack
       - name: Build UPK
@@ -86,7 +87,7 @@ jobs:
           name: ${{ github.event_name == 'push' && github.ref_name || format('UPK CI build {0}', github.run_number) }}
           body: |
             由 CI 从源码构建的 UPK 安装包（Linux 环境执行 ugcli pack，权限位完整）。
-            版本与构建号见文件名 `amd64_nasync_<应用ID>_<版本>.upk`。
+            包含 amd64 和 arm64 两种架构，版本与构建号见文件名。
             安装说明以仓库 README 为准。
           files: build_dir/pkgs/upk/*.upk
           draft: false

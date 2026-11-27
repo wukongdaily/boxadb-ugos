@@ -2,11 +2,11 @@
 build_dir/
 .work/
 webapp/
+embedded/
 
-# 由 scripts/build.sh 生成，不入 git
-# node 运行时 121MB，超过 GitHub 单文件 100MB 限制，构建时下载并校验 sha256
+# Node 运行时：>100MB 超 GitHub 单文件限制，构建时下载并校验 sha256
 rootfs_amd64/bin/node
-rootfs_common/pair/
+rootfs_arm64/bin/node
 
 # 系统
 .DS_Store

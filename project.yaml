@@ -1,11 +1,11 @@
 # boxadb UGOS 原生应用（真实版，路线 A：inner + 系统反代 + WS）
 spec_version: 2.1
 app_id: com.wukongdaily.boxadb
-version: 0.6.1
+version: 0.7.0
 
 support_arch:
   - amd64
-# arm64 暂缓：等 UGOS 版稳定后再加（用户 2026-11-19 要求）
+  - arm64
 
 product_series:
   - nasync
@@ -60,13 +60,13 @@ parameters:
 i18n:
   en-US:
     name: BoxADB
-    description: Debug Android TV boxes from the browser via the UGREEN NAS (ADB over WiFi)
+    description: "Web-based ADB helper for TV boxes: install APK/XAPK/APKM, ADB terminal, remote control, screenshot, reboot."
     author: Wukong Daily
     official: https://github.com/wukongdaily/boxadb-ugos
     help: https://github.com/wukongdaily/boxadb-ugos/discussions
   zh-CN:
     name: 盒子助手
-    description: 在浏览器里远程调试 Android 盒子（ADB over WiFi），绿联 NAS 原生版
+    description: "网页版 ADB 助手（盒子/电视专用）：安装 APK/XAPK/APKM、ADB 终端、遥控器、截图、重启。"
     author: 悟空的日常
     official: https://github.com/wukongdaily/boxadb-ugos
     help: https://github.com/wukongdaily/boxadb-ugos/discussions
